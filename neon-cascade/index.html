@@ -67,6 +67,11 @@
   }
   .pip.lost{ background:var(--bad); border-color:var(--bad); box-shadow:0 0 16px rgba(255,77,94,.85); transform:scale(1.16); }
   #missLabel{ font-size:11px; letter-spacing:.28em; color:var(--dim); margin-top:7px; font-weight:700; }
+  #missCount{
+    font-size:clamp(20px,4.6vw,32px); font-weight:900; line-height:1;
+    font-variant-numeric:tabular-nums; color:#9fb4c7;
+  }
+  .hide{ display:none !important; }
 
   #comboBox{
     margin-top:2.2vh; text-align:center;
@@ -111,6 +116,7 @@
     position:absolute; inset:0; display:flex; flex-direction:column;
     align-items:center; justify-content:center; text-align:center;
     padding: calc(var(--safe-t) + 24px) 26px calc(var(--safe-b) + 24px);
+    overflow-y:auto;
     background:radial-gradient(120% 90% at 50% 42%, rgba(20,30,60,.86), rgba(4,6,14,.97) 70%);
     -webkit-backdrop-filter:blur(9px); backdrop-filter:blur(9px);
     z-index:10;
@@ -138,8 +144,24 @@
   .rule b{ color:#fff; font-weight:800; }
   .rule .ic{ font-size:19px; width:24px; text-align:center; flex:none; }
 
+  .modes{
+    margin-top:22px; display:flex; gap:10px; width:100%; max-width:430px;
+  }
+  .mode{
+    flex:1; pointer-events:auto; cursor:pointer; font-family:inherit; text-align:left;
+    padding:14px 13px; border-radius:14px;
+    background:rgba(255,255,255,.04); border:2px solid rgba(255,255,255,.09);
+    color:#8fa1ba; touch-action:manipulation;
+    transition:border-color .16s ease, background .16s ease, color .16s ease;
+  }
+  .mode .mn{ display:block; font-size:14px; font-weight:900; letter-spacing:.18em; }
+  .mode .md{ display:block; margin-top:6px; font-size:11.5px; line-height:1.42; }
+  .mode.on{ border-color:#35b9f0; background:rgba(56,189,248,.13); color:#cfe4fb; }
+  .mode.on .mn{ color:#7fd8ff; }
+  .mode:focus-visible{ outline:2px solid #7fd8ff; outline-offset:3px; }
+
   .btn{
-    margin-top:30px; pointer-events:auto; cursor:pointer;
+    margin-top:24px; pointer-events:auto; cursor:pointer;
     padding:19px 60px; border:none; border-radius:999px;
     font-size:19px; font-weight:900; letter-spacing:.22em; color:#04121f;
     background:linear-gradient(180deg,#9fe6ff,#35b9f0);
@@ -198,6 +220,7 @@
     </div>
     <div id="missBox">
       <div id="pips"><div class="pip"></div><div class="pip"></div><div class="pip"></div></div>
+      <div id="missCount" class="hide">0</div>
       <div id="missLabel">MISSES</div>
     </div>
   </div>
@@ -220,9 +243,19 @@
   <div class="tagline">RHYTHM PROOF OF CONCEPT</div>
   <div class="rules">
     <div class="rule"><span class="ic">👆</span><span>Tap each <b>black tile</b> as it reaches the glowing strike line.</span></div>
-    <div class="rule"><span class="ic">🫱</span><span><b>Long tiles</b> must be held — keep your finger on the tile until it has fully passed.</span></div>
+    <div class="rule"><span class="ic">🫱</span><span><b>Long tiles</b> must be held — keep your finger down until the tile has passed. Holding on longer is fine.</span></div>
     <div class="rule"><span class="ic">✌️</span><span>Tiles that land together need <b>two fingers at once</b>.</span></div>
-    <div class="rule"><span class="ic">⛔</span><span>Tapping <b>empty space is instant game over</b>. Three missed tiles also ends the run.</span></div>
+    <div class="rule"><span class="ic">⛔</span><span id="ruleFail"></span></div>
+  </div>
+  <div class="modes">
+    <button class="mode" id="modeChill" data-mode="chill">
+      <span class="mn">CHILL</span>
+      <span class="md">Mistakes only break your streak. The song always finishes.</span>
+    </button>
+    <button class="mode" id="modeStrict" data-mode="strict">
+      <span class="mn">STRICT</span>
+      <span class="md">One wrong tap or broken hold ends the run. So do three misses.</span>
+    </button>
   </div>
   <button class="btn" id="startBtn">START</button>
   <div class="hint">HEADPHONES OR SPEAKER ON · PORTRAIT RECOMMENDED</div>
@@ -285,20 +318,18 @@ const CONFIG = {
      dt = songTime - note.time.  Negative = early.
      A tile is only tappable while dt is inside this window AND the
      finger is geometrically inside the tile rectangle. */
-  HIT_EARLY_S:          0.32,
-  HIT_LATE_S:           0.10,
-  PERFECT_S:            0.09,
-  GREAT_S:              0.20,
+  HIT_EARLY_S:          0.38,
+  HIT_LATE_S:           0.16,
+  PERFECT_S:            0.11,
+  GREAT_S:              0.26,
 
   /* --- Touch tolerances (logical px) --------------------------- */
-  TOUCH_TOLERANCE_PX:   18,    // generosity around a tile on pointerdown
-  HOLD_TOLERANCE_PX:    22,    // generosity while tracking a hold
-  HOLD_ANCHOR_BAND_PX:  260,   // vertical band around the strike line that always
+  TOUCH_TOLERANCE_PX:   26,    // generosity around a tile on pointerdown
+  HOLD_TOLERANCE_PX:    34,    // generosity while tracking a hold
+  HOLD_ANCHOR_BAND_PX:  330,   // vertical band around the strike line that always
                                // counts as "inside" a hold you are already holding
-  HOLD_RELEASE_GRACE_S: 0.12,  // releasing this early still completes the hold
-
-  /* --- Fail rules ---------------------------------------------- */
-  MAX_CONSECUTIVE_MISSES: 3,
+  HOLD_RELEASE_GRACE_S: 0.28,  // releasing this early still completes the hold
+  HOLD_PARTIAL_CREDIT:  0.55,  // hold at least this fraction and you still bank points
   SECTION_LERP_S:       0.80,  // speed-change ease (keeps on-screen tiles from jumping)
 
   /* --- Audio ---------------------------------------------------- */
@@ -433,8 +464,8 @@ const CHORD_HITS = [
 
 const SECTIONS = [
   { startTime: 0,  speedMultiplier: 1.00, name:'INTRO'  },
-  { startTime: 16, speedMultiplier: 1.25, name:'CHORUS' },
-  { startTime: 32, speedMultiplier: 1.55, name:'FINALE' }
+  { startTime: 16, speedMultiplier: 1.22, name:'CHORUS' },
+  { startTime: 32, speedMultiplier: 1.45, name:'FINALE' }
 ];
 
 const SONG_DURATION = BAR_PLAN.length * BAR;   // 48s
@@ -1076,6 +1107,7 @@ class ScoreManager {
     this.resolved = 0;         // notes that produced a hit or a miss
     this.perfect = 0;
     this.holdsDone = 0;
+    this.misses = 0;
     this.consecutiveMisses = 0;
   }
   get multiplier(){
@@ -1101,9 +1133,15 @@ class ScoreManager {
     this.holdsDone++;
     return this.award(CONFIG.SCORE_HOLD_COMPLETE);
   }
+  /** Credit for a hold that was carried most of the way but not finished.
+      Awarded BEFORE the combo resets, so it still rides the multiplier. */
+  registerHoldPartial(fraction){
+    return this.award(Math.round(CONFIG.SCORE_HOLD_COMPLETE * fraction * 0.5));
+  }
   registerMiss(){
     this.combo = 0;
     this.resolved++;
+    this.misses++;
     this.consecutiveMisses++;
     return this.consecutiveMisses;
   }
@@ -1116,6 +1154,32 @@ class ScoreManager {
    ================================================================ */
 const STATE = { MENU:'MENU', COUNTDOWN:'COUNTDOWN', PLAYING:'PLAYING',
                 ROUND_OVER:'ROUND_OVER', RESULTS:'RESULTS', PAUSED:'PAUSED' };
+
+/* ----------------------------------------------------------------
+   Difficulty. CHILL is the default: a mistimed tap or a fumbled hold
+   costs you your streak and nothing more, and the song always plays to
+   the end. STRICT is the original rule set, where a single wrong tap
+   or broken hold ends the run on the spot.
+   ---------------------------------------------------------------- */
+const DIFFICULTIES = {
+  chill: {
+    name: 'CHILL',
+    blurb: 'Mistakes only break your streak. The song always plays to the end.',
+    rule:  'Mistimed taps and fumbled holds <b>break your streak</b> — the run keeps going.',
+    endOnWrongTap: false,
+    endOnHoldBreak: false,
+    maxConsecutiveMisses: Infinity
+  },
+  strict: {
+    name: 'STRICT',
+    blurb: 'One wrong tap or broken hold ends the run. So do three misses.',
+    rule:  'Tapping <b>empty space is instant game over</b>. Three missed tiles also ends the run.',
+    endOnWrongTap: true,
+    endOnHoldBreak: true,
+    maxConsecutiveMisses: 3
+  }
+};
+const DEFAULT_DIFFICULTY = 'chill';
 
 const FAIL_REASON = {
   WRONG_TAP:    'YOU TAPPED EMPTY SPACE',
@@ -1138,6 +1202,7 @@ class Game {
     this.score = new ScoreManager();
 
     this.state = STATE.MENU;
+    this.difficulty = this._loadDifficulty();
     this.notes = [];
     this.firstLive = 0;                 // sliding window start into this.notes
     this.pointers = new Map();          // pointerId -> touch record
@@ -1160,6 +1225,7 @@ class Game {
 
     this._cacheDom();
     this._bindUi();
+    this._syncDifficultyUi();
     this._bindInput();
 
     this._resize();
@@ -1175,12 +1241,41 @@ class Game {
     requestAnimationFrame(this.loop);
   }
 
+  /** The active rule set. Everything that can end a run reads this. */
+  get rules(){ return DIFFICULTIES[this.difficulty]; }
+
+  _loadDifficulty(){
+    /* localStorage can throw in a sandboxed frame — never let it break boot. */
+    try {
+      const v = window.localStorage.getItem('neon-cascade-difficulty');
+      if (v && DIFFICULTIES[v]) return v;
+    } catch(e){ /* ignore */ }
+    return DEFAULT_DIFFICULTY;
+  }
+
+  setDifficulty(mode){
+    if (!DIFFICULTIES[mode]) return;
+    this.difficulty = mode;
+    try { window.localStorage.setItem('neon-cascade-difficulty', mode); } catch(e){ /* ignore */ }
+    this._syncDifficultyUi();
+  }
+
+  _syncDifficultyUi(){
+    for (const b of this.dom.modes) b.classList.toggle('on', b.dataset.mode === this.difficulty);
+    this.dom.ruleFail.innerHTML = this.rules.rule;
+    const chill = this.rules.maxConsecutiveMisses === Infinity;
+    this.dom.pips.forEach(p => p.classList.toggle('hide', chill));
+    this.dom.missCount.classList.toggle('hide', !chill);
+  }
+
   /* ---------------- DOM ---------------------------------------- */
   _cacheDom(){
     const $ = id => document.getElementById(id);
     this.dom = {
       hud:$('hud'), score:$('score'), combo:$('combo'), comboBox:$('comboBox'),
       mult:$('mult'), pips:Array.from(document.querySelectorAll('#pips .pip')),
+      missCount:$('missCount'), missLabel:$('missLabel'), ruleFail:$('ruleFail'),
+      modes:Array.from(document.querySelectorAll('.mode')),
       progressFill:$('progressFill'), songSection:$('songSection'), songTitle:$('songTitle'),
       startOverlay:$('startOverlay'), resultOverlay:$('resultOverlay'), pauseOverlay:$('pauseOverlay'),
       startBtn:$('startBtn'), retryBtn:$('retryBtn'), menuBtn:$('menuBtn'),
@@ -1196,6 +1291,7 @@ class Game {
     const tap = (el, fn) => {
       el.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); fn(); });
     };
+    for (const b of this.dom.modes) tap(b, () => this.setDifficulty(b.dataset.mode));
     tap(this.dom.startBtn,  () => this.startRun());
     tap(this.dom.retryBtn,  () => this.startRun());
     tap(this.dom.menuBtn,   () => this.toMenu());
@@ -1400,7 +1496,8 @@ class Game {
     const s = this.score;
     this.dom.resultTitle.textContent = this.cleared ? 'SONG CLEARED' : 'ROUND OVER';
     this.dom.resultTitle.style.color = this.cleared ? '#ffd54a' : '#ff6b78';
-    this.dom.resultReason.textContent = this.failReason || '';
+    this.dom.resultReason.textContent =
+      (this.failReason || '') + ' · ' + this.rules.name;
     this.dom.finalScore.textContent = s.score.toLocaleString();
     this.dom.statCombo.textContent = s.maxCombo;
     this.dom.statAcc.textContent = Math.round(s.accuracy*100) + '%';
@@ -1517,9 +1614,11 @@ class Game {
 
       const r = this.noteRect(n, songTime, pps);
 
-      if (n.state === 'holding'){
-        /* Second finger landing on a hold that is already in progress:
-           harmless, absorb it instead of failing the run. */
+      if (n.type === 'hold' && n.state !== 'pending'){
+        /* A finger landing on a hold that is already in progress, already
+           finished, or that you just slipped off: absorb it. Without this,
+           putting your finger back after a slip would read as a second
+           mistake on top of the one you already paid for. */
         if (this._insideRect(r, x, y, CONFIG.HOLD_TOLERANCE_PX)) alreadyHeld = true;
         continue;
       }
@@ -1586,7 +1685,15 @@ class Game {
     this.particles.burst(x, y, 0, 1.1);           // red burst at the offending finger
     this.popups.spawn(x, y - 70, 'MISS-TAP', tooEarly ? 'TOO EARLY' : 'EMPTY SPACE', '#ff5566', 42, this.LW);
     this.audio.sfx('miss');
-    this.endRound(tooEarly ? FAIL_REASON.TOO_EARLY : FAIL_REASON.WRONG_TAP);
+    if (this.rules.endOnWrongTap){
+      this.endRound(tooEarly ? FAIL_REASON.TOO_EARLY : FAIL_REASON.WRONG_TAP);
+    } else {
+      /* Costs the streak, not the run. Still enough of a bite that mashing
+         every lane is a losing strategy. */
+      this.score.breakCombo();
+      this.shake = Math.max(this.shake, 8);
+      this.redFlash = Math.max(this.redFlash, 0.3);
+    }
   }
 
   onMove(pid, cx, cy){
@@ -1622,11 +1729,32 @@ class Game {
     note.state = 'broken';
     note.pointerId = null;
     this.laneHold[note.lane] = 0;
-    this.particles.burst(x, y, 0, 1.0);
-    this.popups.spawn(x, y - 70, 'BROKEN', reason === FAIL_REASON.HOLD_EARLY ? 'RELEASED EARLY' : 'FINGER SLIPPED',
-                      '#ff5566', 42, this.LW);
-    this.audio.sfx('miss');
-    this.endRound(reason);
+
+    if (this.rules.endOnHoldBreak){
+      this.particles.burst(x, y, 0, 1.0);
+      this.popups.spawn(x, y - 70, 'BROKEN',
+                        reason === FAIL_REASON.HOLD_EARLY ? 'RELEASED EARLY' : 'FINGER SLIPPED',
+                        '#ff5566', 42, this.LW);
+      this.audio.sfx('miss');
+      this.endRound(reason);
+      return;
+    }
+
+    /* Forgiving: you keep whatever you actually held. Get most of the way
+       through and you still bank points, just at a reduced rate. */
+    const held = clamp((this.songTime - note.time) / Math.max(note.duration, 0.001), 0, 1);
+    if (held >= CONFIG.HOLD_PARTIAL_CREDIT){
+      const gained = this.score.registerHoldPartial(held);
+      this.particles.burst(x, y, comboHue(this.score.combo), 0.8);
+      this.popups.spawn(x, y - 70, '+' + gained, 'PARTIAL HOLD', '#ffc46b', 42, this.LW);
+      this.audio.sfx('hit', this.score.combo);
+    } else {
+      this.particles.burst(x, y, 0, 0.9);
+      this.popups.spawn(x, y - 70, 'DROPPED', '', '#ff8fa0', 40, this.LW);
+      this.audio.sfx('miss');
+    }
+    this.score.breakCombo();
+    this.shake = Math.max(this.shake, 8);
   }
 
   onUp(pid){
@@ -1738,7 +1866,7 @@ class Game {
     this.redFlash = Math.max(this.redFlash, 0.45);
     this.audio.sfx('miss');
     this._flashPips();
-    if (consec >= CONFIG.MAX_CONSECUTIVE_MISSES) this.endRound(FAIL_REASON.MISSES);
+    if (consec >= this.rules.maxConsecutiveMisses) this.endRound(FAIL_REASON.MISSES);
   }
 
   updateFx(dt){
@@ -1765,7 +1893,11 @@ class Game {
     setTimeout(() => el.classList.remove('bump'), 190);
   }
   _flashPips(){
-    const lost = Math.min(this.score.consecutiveMisses, CONFIG.MAX_CONSECUTIVE_MISSES);
+    if (this.rules.maxConsecutiveMisses === Infinity){
+      this.dom.missCount.textContent = this.score.misses;
+      return;
+    }
+    const lost = Math.min(this.score.consecutiveMisses, this.rules.maxConsecutiveMisses);
     this.dom.pips.forEach((p,i) => p.classList.toggle('lost', i < lost));
   }
 
@@ -1792,8 +1924,9 @@ class Game {
       this.dom.mult.classList.toggle('on', m > 1);
       this.dom.mult.style.color = comboColor(s.combo, 70);
     }
-    if (force || c.misses !== s.consecutiveMisses){
-      c.misses = s.consecutiveMisses;
+    const missKey = s.consecutiveMisses + ':' + s.misses;
+    if (force || c.misses !== missKey){
+      c.misses = missKey;
       this._flashPips();
     }
     const prog = clamp(this.lastSongTime / SONG_DATA.duration, 0, 1);

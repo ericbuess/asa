@@ -23,15 +23,28 @@ from **INTRO → CHORUS → FINALE**.
   120 BPM in A minor. The tiles *are* the melody: both come from the same
   24-bar plan, so what you tap is what you hear.
 
-## Rules (strict, per spec)
+## Rules
 
-| Action | Result |
-| --- | --- |
-| Tap a tile in its window | Hit — PERFECT / GREAT / GOOD |
-| Tap empty space | **Instant round over** |
-| Tap a tile far too early | **Instant round over** |
-| Let a tile pass the strike line | Miss — 3 in a row ends the run |
-| Finger leaves a hold, or releases early | **Instant round over** |
+Two rule sets, chosen on the start screen. **Chill is the default.**
+
+| Action | Chill | Strict (the original spec) |
+| --- | --- | --- |
+| Tap a tile in its window | Hit — PERFECT / GREAT / GOOD | same |
+| Hold past the end of a hold tile | Fine | Fine |
+| Tap empty space | Streak broken | **Instant round over** |
+| Tap a tile far too early | Streak broken | **Instant round over** |
+| Let a tile pass the strike line | Miss, streak broken | Miss — 3 in a row ends the run |
+| Release a hold early | Partial credit, streak broken | **Instant round over** |
+| Finger slides out of a hold | Partial credit, streak broken | **Instant round over** |
+
+In Chill nothing ends the run early — the song always plays to the end and the
+score is the whole story. Mistakes are still expensive: an abusive player who
+mashes empty space for the entire track finishes with roughly 1,200 points
+against 76,960 for a clean run.
+
+A hold you carried at least `HOLD_PARTIAL_CREDIT` (55%) of the way still banks
+points, scaled by how far you got, and it is awarded *before* the combo resets
+so it rides the multiplier you earned.
 
 ## Architecture
 
@@ -78,11 +91,14 @@ threshold and the latency-compensation offset:
 
 ```js
 AUDIO_OFFSET_S: 0.00,   // + = tiles arrive later relative to the audio
-HIT_EARLY_S:    0.32,   // how early a tile becomes tappable
-HIT_LATE_S:     0.10,   // grace after the strike line before it is a miss
-TOUCH_TOLERANCE_PX: 18, // logical px of generosity around a tile
-MAX_CONSECUTIVE_MISSES: 3,
+HIT_EARLY_S:    0.38,   // how early a tile becomes tappable
+HIT_LATE_S:     0.16,   // grace after the strike line before it is a miss
+TOUCH_TOLERANCE_PX: 26, // logical px of generosity around a tile
+HOLD_RELEASE_GRACE_S: 0.28,  // releasing this early still completes the hold
 ```
+
+What can end a run lives in `DIFFICULTIES` rather than being scattered through
+the input code, so a rule set is a data change, not a logic change.
 
 The chart is generated from `BAR_PLAN` (24 bars of `[chord, pattern, drums]`)
 plus `CHORD_HITS` for the two-finger moments. Editing a bar changes the music
@@ -94,7 +110,10 @@ Driven end-to-end in Chromium at an iPad Mini viewport (768×1024 @2x, touch):
 
 - A robot that always aims **at the strike line** (as a human does) clears the
   song 132/132, 100% accuracy, all 10 holds — the fairness check
-- Each fail rule fires correctly: empty tap, three misses, early release, finger slip
+- Chill survives an abusive player: 1,422 empty taps and 122 misses still
+  reaches SONG COMPLETE, and still scores only 1,200
+- Each strict fail rule fires correctly: empty tap, three misses, early release,
+  finger slip — and each of those is proven *not* to end a Chill run
 - Real two-finger `Input.dispatchTouchEvent` arrives as two distinct pointers
 - 60 fps median / 51 fps minimum under software rendering (SwiftShader),
   which is the floor, not the expectation, on real hardware
