@@ -1,0 +1,2101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#05070f">
+<title>NEON CASCADE — Rhythm POC</title>
+<style>
+  /* ============================================================
+     GLOBAL / RESET
+     ============================================================ */
+  :root{
+    --bg:#05070f;
+    --ink:#eaf2ff;
+    --dim:#7d8ba5;
+    --accent:#38bdf8;
+    --gold:#ffd54a;
+    --bad:#ff4d5e;
+    --safe-t: env(safe-area-inset-top, 0px);
+    --safe-b: env(safe-area-inset-bottom, 0px);
+    --safe-l: env(safe-area-inset-left, 0px);
+    --safe-r: env(safe-area-inset-right, 0px);
+  }
+  *{ margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body{
+    width:100%; height:100%; overflow:hidden; background:var(--bg); color:var(--ink);
+    font-family:"Avenir Next","Helvetica Neue",Helvetica,Arial,system-ui,sans-serif;
+    -webkit-user-select:none; user-select:none;
+    -webkit-touch-callout:none;
+    overscroll-behavior:none;
+    position:fixed; inset:0;
+  }
+  /* The canvas owns all gameplay touches. touch-action:none kills scroll/zoom/double-tap. */
+  #game{
+    position:absolute; inset:0; width:100%; height:100%; display:block;
+    touch-action:none; -ms-touch-action:none;
+  }
+
+  /* ============================================================
+     HUD (DOM overlay — never intercepts touches)
+     ============================================================ */
+  #hud{
+    position:absolute; inset:0; pointer-events:none;
+    padding: calc(var(--safe-t) + 10px) calc(var(--safe-r) + 18px) calc(var(--safe-b) + 8px) calc(var(--safe-l) + 18px);
+    display:flex; flex-direction:column; align-items:stretch;
+    opacity:0; transition:opacity .28s ease;
+  }
+  #hud.on{ opacity:1; }
+
+  #topRow{ display:flex; align-items:flex-start; justify-content:space-between; }
+
+  #scoreBox{ text-align:left; }
+  #score{
+    font-size:clamp(30px,7.4vw,58px); font-weight:800; letter-spacing:.02em; line-height:1;
+    font-variant-numeric:tabular-nums; text-shadow:0 0 22px rgba(80,180,255,.35);
+  }
+  #scoreLabel{ font-size:11px; letter-spacing:.34em; color:var(--dim); margin-top:5px; font-weight:700; }
+
+  #missBox{ text-align:right; }
+  #pips{ display:flex; gap:8px; justify-content:flex-end; }
+  .pip{
+    width:13px; height:13px; border-radius:50%;
+    border:2px solid rgba(160,180,210,.45); background:transparent;
+    transition:background .18s ease, box-shadow .18s ease, border-color .18s ease, transform .18s ease;
+  }
+  .pip.lost{ background:var(--bad); border-color:var(--bad); box-shadow:0 0 16px rgba(255,77,94,.85); transform:scale(1.16); }
+  #missLabel{ font-size:11px; letter-spacing:.28em; color:var(--dim); margin-top:7px; font-weight:700; }
+
+  #comboBox{
+    margin-top:2.2vh; text-align:center;
+    transition:transform .12s cubic-bezier(.2,1.7,.5,1);
+  }
+  #comboBox.pop{ transform:scale(1.14); }
+  #comboBox.hidden{ opacity:0; }
+  #combo{
+    font-size:clamp(46px,13vw,104px); font-weight:900; line-height:.92;
+    font-variant-numeric:tabular-nums; letter-spacing:-.02em;
+    color:#fff; text-shadow:0 0 30px currentColor;
+  }
+  #comboLabel{ font-size:12px; letter-spacing:.44em; color:var(--dim); font-weight:800; margin-top:2px; }
+  #mult{
+    display:inline-block; margin-top:9px; padding:4px 14px; border-radius:999px;
+    font-size:clamp(15px,3.6vw,22px); font-weight:900; letter-spacing:.06em;
+    border:2px solid currentColor; opacity:0;
+    transition:opacity .2s ease, transform .18s cubic-bezier(.2,1.9,.4,1);
+  }
+  #mult.on{ opacity:1; }
+  #mult.bump{ transform:scale(1.3); }
+
+  #bottomRow{ margin-top:auto; }
+  #progressWrap{
+    height:5px; border-radius:99px; background:rgba(255,255,255,.09); overflow:hidden;
+  }
+  #progressFill{
+    height:100%; width:0%; border-radius:99px;
+    background:linear-gradient(90deg,#38bdf8,#a78bfa 55%,#ffd54a);
+    box-shadow:0 0 14px rgba(120,180,255,.6);
+    transition:width .1s linear;
+  }
+  #songLabel{
+    display:flex; justify-content:space-between;
+    font-size:10px; letter-spacing:.28em; color:var(--dim); margin-top:7px; font-weight:700;
+  }
+
+  /* ============================================================
+     OVERLAYS
+     ============================================================ */
+  .overlay{
+    position:absolute; inset:0; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; text-align:center;
+    padding: calc(var(--safe-t) + 24px) 26px calc(var(--safe-b) + 24px);
+    background:radial-gradient(120% 90% at 50% 42%, rgba(20,30,60,.86), rgba(4,6,14,.97) 70%);
+    -webkit-backdrop-filter:blur(9px); backdrop-filter:blur(9px);
+    z-index:10;
+  }
+  .overlay.hidden{ display:none; }
+
+  .brand{
+    font-size:clamp(38px,10.5vw,86px); font-weight:900; letter-spacing:.03em; line-height:.96;
+    background:linear-gradient(180deg,#ffffff,#8ed7ff 45%,#5b8cff);
+    -webkit-background-clip:text; background-clip:text; color:transparent;
+    filter:drop-shadow(0 0 26px rgba(90,160,255,.4));
+  }
+  .tagline{ margin-top:10px; font-size:12px; letter-spacing:.42em; color:var(--dim); font-weight:800; }
+
+  .rules{
+    margin-top:26px; max-width:430px; width:100%;
+    display:flex; flex-direction:column; gap:11px;
+  }
+  .rule{
+    display:flex; align-items:center; gap:13px; text-align:left;
+    padding:11px 15px; border-radius:13px;
+    background:rgba(255,255,255,.045); border:1px solid rgba(255,255,255,.075);
+    font-size:13.5px; line-height:1.42; color:#c3d1e6;
+  }
+  .rule b{ color:#fff; font-weight:800; }
+  .rule .ic{ font-size:19px; width:24px; text-align:center; flex:none; }
+
+  .btn{
+    margin-top:30px; pointer-events:auto; cursor:pointer;
+    padding:19px 60px; border:none; border-radius:999px;
+    font-size:19px; font-weight:900; letter-spacing:.22em; color:#04121f;
+    background:linear-gradient(180deg,#9fe6ff,#35b9f0);
+    box-shadow:0 12px 40px rgba(56,189,248,.42), inset 0 1px 0 rgba(255,255,255,.6);
+    font-family:inherit; touch-action:manipulation;
+    transition:transform .1s ease, box-shadow .1s ease;
+  }
+  .btn:active{ transform:translateY(2px) scale(.985); box-shadow:0 6px 22px rgba(56,189,248,.34); }
+  .btn.ghost{
+    background:transparent; color:#9fb4c7; border:2px solid rgba(160,180,210,.3);
+    box-shadow:none; padding:14px 40px; font-size:14px; margin-top:14px;
+  }
+  .hint{ margin-top:16px; font-size:11.5px; letter-spacing:.2em; color:#5d6b83; font-weight:700; }
+
+  /* Results */
+  #resultTitle{
+    font-size:clamp(30px,8.6vw,64px); font-weight:900; letter-spacing:.05em;
+  }
+  #resultReason{
+    margin-top:9px; font-size:12.5px; letter-spacing:.24em; color:var(--dim); font-weight:800;
+    max-width:400px;
+  }
+  #finalScore{
+    margin-top:24px; font-size:clamp(46px,14vw,104px); font-weight:900; line-height:1;
+    font-variant-numeric:tabular-nums;
+    background:linear-gradient(180deg,#fff,#ffd54a);
+    -webkit-background-clip:text; background-clip:text; color:transparent;
+    filter:drop-shadow(0 0 24px rgba(255,200,90,.32));
+  }
+  #finalScoreLabel{ font-size:11px; letter-spacing:.4em; color:var(--dim); margin-top:6px; font-weight:800; }
+  .statGrid{
+    margin-top:26px; display:grid; grid-template-columns:repeat(3,1fr); gap:11px;
+    width:100%; max-width:430px;
+  }
+  .stat{
+    padding:14px 8px; border-radius:14px;
+    background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.08);
+  }
+  .stat .v{ font-size:clamp(20px,5.6vw,30px); font-weight:900; font-variant-numeric:tabular-nums; }
+  .stat .k{ font-size:9.5px; letter-spacing:.24em; color:var(--dim); margin-top:5px; font-weight:800; }
+
+  /* Pause */
+  #pauseOverlay .brand{ font-size:clamp(30px,8vw,54px); }
+</style>
+</head>
+<body>
+
+<canvas id="game"></canvas>
+
+<!-- ============ HUD ============ -->
+<div id="hud">
+  <div id="topRow">
+    <div id="scoreBox">
+      <div id="score">0</div>
+      <div id="scoreLabel">SCORE</div>
+    </div>
+    <div id="missBox">
+      <div id="pips"><div class="pip"></div><div class="pip"></div><div class="pip"></div></div>
+      <div id="missLabel">MISSES</div>
+    </div>
+  </div>
+
+  <div id="comboBox">
+    <div id="combo">0</div>
+    <div id="comboLabel">COMBO</div>
+    <div id="mult">&times;1</div>
+  </div>
+
+  <div id="bottomRow">
+    <div id="progressWrap"><div id="progressFill"></div></div>
+    <div id="songLabel"><span id="songTitle">NEON CASCADE</span><span id="songSection">INTRO</span></div>
+  </div>
+</div>
+
+<!-- ============ START ============ -->
+<div class="overlay" id="startOverlay">
+  <div class="brand">NEON<br>CASCADE</div>
+  <div class="tagline">RHYTHM PROOF OF CONCEPT</div>
+  <div class="rules">
+    <div class="rule"><span class="ic">👆</span><span>Tap each <b>black tile</b> as it reaches the glowing strike line.</span></div>
+    <div class="rule"><span class="ic">🫱</span><span><b>Long tiles</b> must be held — keep your finger on the tile until it has fully passed.</span></div>
+    <div class="rule"><span class="ic">✌️</span><span>Tiles that land together need <b>two fingers at once</b>.</span></div>
+    <div class="rule"><span class="ic">⛔</span><span>Tapping <b>empty space is instant game over</b>. Three missed tiles also ends the run.</span></div>
+  </div>
+  <button class="btn" id="startBtn">START</button>
+  <div class="hint">HEADPHONES OR SPEAKER ON · PORTRAIT RECOMMENDED</div>
+</div>
+
+<!-- ============ RESULTS ============ -->
+<div class="overlay hidden" id="resultOverlay">
+  <div id="resultTitle">ROUND OVER</div>
+  <div id="resultReason">&nbsp;</div>
+  <div id="finalScore">0</div>
+  <div id="finalScoreLabel">FINAL SCORE</div>
+  <div class="statGrid">
+    <div class="stat"><div class="v" id="statCombo">0</div><div class="k">MAX COMBO</div></div>
+    <div class="stat"><div class="v" id="statAcc">0%</div><div class="k">ACCURACY</div></div>
+    <div class="stat"><div class="v" id="statProg">0%</div><div class="k">SONG</div></div>
+  </div>
+  <button class="btn" id="retryBtn">RETRY</button>
+  <button class="btn ghost" id="menuBtn">MAIN MENU</button>
+</div>
+
+<!-- ============ PAUSE ============ -->
+<div class="overlay hidden" id="pauseOverlay">
+  <div class="brand">PAUSED</div>
+  <div class="tagline">THE RUN IS STILL ALIVE</div>
+  <button class="btn" id="resumeBtn">RESUME</button>
+  <button class="btn ghost" id="quitBtn">END RUN</button>
+</div>
+
+<script>
+"use strict";
+/* ================================================================
+   NEON CASCADE — Magic-Tiles-style rhythm POC
+   Single self-contained file. Canvas playfield + DOM HUD.
+   ================================================================ */
+
+/* ================================================================
+   1. TUNABLES  (every magic number lives here)
+   ================================================================ */
+const CONFIG = {
+  /* --- Logical coordinate space -------------------------------
+     Width is FIXED at 1080 logical units; height is derived from the
+     real viewport aspect so nothing is ever letterboxed. All hit
+     testing, note positions and tolerances are in these units. */
+  LOGICAL_W:            1080,
+  LANE_COUNT:           4,
+  PLAYFIELD_ASPECT:     0.70,  // playfield width <= logicalHeight * this (keeps landscape sane)
+  STRIKE_Y_RATIO:       0.795, // strike line as a fraction of logical height
+
+  /* --- Fall speed / geometry ----------------------------------
+     Speed is derived from LEAD_TIME so the game feels identical on
+     every aspect ratio: a note always takes LEAD_TIME seconds to
+     travel from the top of the screen to the strike line at x1.0. */
+  LEAD_TIME:            1.35,  // seconds, at speedMultiplier 1.0
+  TAP_NOTE_SECONDS:     0.21,  // tap tile height expressed as time
+  HOLD_MIN_SECONDS:     0.50,  // shortest allowed hold
+  NOTE_SIDE_INSET:      16,    // logical px of gutter on each side of a tile
+  NOTE_CORNER:          14,    // tile corner radius (logical px)
+
+  /* --- Hit windows (seconds relative to the ideal hit time) ----
+     dt = songTime - note.time.  Negative = early.
+     A tile is only tappable while dt is inside this window AND the
+     finger is geometrically inside the tile rectangle. */
+  HIT_EARLY_S:          0.32,
+  HIT_LATE_S:           0.10,
+  PERFECT_S:            0.09,
+  GREAT_S:              0.20,
+
+  /* --- Touch tolerances (logical px) --------------------------- */
+  TOUCH_TOLERANCE_PX:   18,    // generosity around a tile on pointerdown
+  HOLD_TOLERANCE_PX:    22,    // generosity while tracking a hold
+  HOLD_ANCHOR_BAND_PX:  260,   // vertical band around the strike line that always
+                               // counts as "inside" a hold you are already holding
+  HOLD_RELEASE_GRACE_S: 0.12,  // releasing this early still completes the hold
+
+  /* --- Fail rules ---------------------------------------------- */
+  MAX_CONSECUTIVE_MISSES: 3,
+  SECTION_LERP_S:       0.80,  // speed-change ease (keeps on-screen tiles from jumping)
+
+  /* --- Audio ---------------------------------------------------- */
+  AUDIO_OFFSET_S:       0.00,  // + = notes appear later relative to audio (latency comp.)
+  SCHEDULE_AHEAD_S:     1.50,  // how far ahead the audio scheduler queues events
+  COUNTDOWN_S:          3.0,
+
+  /* --- Scoring --------------------------------------------------- */
+  SCORE_PERFECT:        120,
+  SCORE_GREAT:          80,
+  SCORE_GOOD:           45,
+  SCORE_HOLD_COMPLETE:  220,
+  COMBO_TIERS:          [8, 16, 28, 44],  // combo needed for x2, x3, x4, x5
+
+  /* --- FX -------------------------------------------------------- */
+  MAX_PARTICLES:        520,
+  MAX_POPUPS:           28,
+  SHAKE_DECAY:          6.5,
+  DPR_CAP:              2      // older iPad Minis choke above 2x
+};
+
+/* Timing/judgement palette */
+const JUDGE = {
+  PERFECT: { label:'PERFECT', color:'#ffd54a', score:CONFIG.SCORE_PERFECT },
+  GREAT:   { label:'GREAT',   color:'#5ee7ff', score:CONFIG.SCORE_GREAT   },
+  GOOD:    { label:'GOOD',    color:'#9fb4c7', score:CONFIG.SCORE_GOOD    }
+};
+
+/* ================================================================
+   2. SMALL UTILITIES
+   ================================================================ */
+const clamp = (v,a,b) => v < a ? a : (v > b ? b : v);
+const lerp  = (a,b,t) => a + (b-a)*t;
+const midiToFreq = m => 440 * Math.pow(2, (m-69)/12);
+
+/** Deterministic RNG so every playthrough charts identically. */
+function makeRng(seed){
+  let s = seed >>> 0;
+  return function(){
+    s ^= s << 13; s >>>= 0;
+    s ^= s >> 17;
+    s ^= s << 5;  s >>>= 0;
+    return s / 4294967296;
+  };
+}
+
+/** Rounded-rect path with a fallback for older Safari. */
+function roundRectPath(ctx, x, y, w, h, r){
+  const rr = Math.min(r, Math.abs(w)/2, Math.abs(h)/2);
+  if (ctx.roundRect){ ctx.beginPath(); ctx.roundRect(x, y, w, h, rr); return; }
+  ctx.beginPath();
+  ctx.moveTo(x+rr, y);
+  ctx.lineTo(x+w-rr, y);       ctx.quadraticCurveTo(x+w, y, x+w, y+rr);
+  ctx.lineTo(x+w, y+h-rr);     ctx.quadraticCurveTo(x+w, y+h, x+w-rr, y+h);
+  ctx.lineTo(x+rr, y+h);       ctx.quadraticCurveTo(x, y+h, x, y+h-rr);
+  ctx.lineTo(x, y+rr);         ctx.quadraticCurveTo(x, y, x+rr, y);
+  ctx.closePath();
+}
+
+/** Streak colour ramp: cool cyan -> violet -> magenta -> orange -> gold. */
+const COMBO_HUES = [
+  { c:0,  h:196 }, { c:10, h:262 }, { c:22, h:312 }, { c:38, h:378 }, { c:60, h:405 }
+];
+function comboHue(combo){
+  if (!(combo > 0)) return COMBO_HUES[0].h % 360;   // also catches NaN/undefined
+  if (combo <= COMBO_HUES[0].c) return COMBO_HUES[0].h % 360;
+  for (let i=1;i<COMBO_HUES.length;i++){
+    const a = COMBO_HUES[i-1], b = COMBO_HUES[i];
+    if (combo <= b.c) return lerp(a.h, b.h, (combo-a.c)/(b.c-a.c)) % 360;
+  }
+  return COMBO_HUES[COMBO_HUES.length-1].h % 360;
+}
+const comboColor = (combo, l=62, s=95, a=1) =>
+  `hsla(${comboHue(combo).toFixed(1)},${s}%,${l}%,${a})`;
+
+/* ================================================================
+   3. THE SONG
+   ------------------------------------------------------------
+   "Neon Cascade" — 120 BPM, 24 bars of 4/4 = 48s, A-minor.
+   Everything (audio AND the tile chart) is generated from the same
+   bar plan, so the tiles are literally the melody you hear.
+   ================================================================ */
+const BPM = 120;
+const SPB = 60 / BPM;            // 0.5s per beat
+const BAR = 4 * SPB;             // 2.0s per bar
+
+/* Each chord supplies: a 6-note melodic pool (low -> high),
+   a 3-note pad voicing, and a bass root. */
+const CHORDS = {
+  Am: { pool:[60,64,69,72,76,79], voice:[57,60,64], bass:45 },
+  F:  { pool:[60,65,69,72,77,81], voice:[53,57,60], bass:41 },
+  C:  { pool:[60,64,67,72,76,79], voice:[55,60,64], bass:48 },
+  G:  { pool:[59,62,67,71,74,79], voice:[55,59,62], bass:43 },
+  E:  { pool:[59,64,68,71,76,80], voice:[56,59,64], bass:40 }
+};
+
+/* Melodic patterns: [beatInBar, poolIndex, lengthInBeats].
+   Notes >= 1.5 beats long become HOLD tiles.
+   Indices deliberately span the whole pool (1..5) so the melodic contour
+   spreads evenly across all four lanes. */
+const PATTERNS = {
+  P1: [[0,1,1],[1,3,1],[2,4,1],[3,2,1]],                                        // calm quarters
+  P2: [[0,2,1],[1,4,1],[2,3,2]],                                                // quarters + half
+  P3: [[0,1,.5],[.5,3,.5],[1,4,.5],[1.5,2,.5],[2,3,.5],[2.5,5,.5],[3,4,1]],     // running eighths
+  P4: [[0,5,.5],[.75,3,.75],[1.5,1,.5],[2,4,1],[3,2,1]],                        // syncopated
+  P5: [[0,2,2],[2,4,2]],                                                        // two 1s HOLDS
+  P6: [[0,5,.5],[.5,3,.5],[1,4,.5],[1.5,1,.5],[2,3,.5],[2.5,5,.5],[3,2,.5],[3.5,4,.5]], // drive
+  P7: [[0,3,1],[1,1,1]],                                                        // half-bar breath
+  P8: [[0,4,3]]                                                                 // final long HOLD
+};
+
+/* 24-bar plan: [chordName, patternName, drumMode]. */
+const BAR_PLAN = [
+  /* --- VERSE (bars 0-7, x1.00) --- */
+  ['Am','P1','light'], ['F','P1','light'], ['C','P2','light'], ['G','P5','light'],
+  ['Am','P1','light'], ['F','P3','light'], ['C','P2','light'], ['G','P7','fill'],
+  /* --- CHORUS (bars 8-15, x1.25) --- */
+  ['F','P3','full'],   ['C','P3','full'],  ['G','P4','full'],  ['Am','P5','full'],
+  ['F','P3','full'],   ['C','P4','full'],  ['G','P3','full'],  ['G','P2','fill'],
+  /* --- FINALE (bars 16-23, x1.55) --- */
+  ['Am','P6','drive'], ['G','P6','drive'], ['F','P4','drive'], ['E','P5','drive'],
+  ['Am','P6','drive'], ['G','P6','drive'], ['F','P3','drive'], ['Am','P8','crash']
+];
+
+/* Bars (and beats) where an extra simultaneous tile + chord stab lands.
+   These are the two-finger moments. */
+const CHORD_HITS = [
+  [4,0],                                     // verse teaser
+  [8,0], [9,0], [11,0], [12,0], [15,2],      // chorus
+  [16,0], [17,0], [19,0], [20,0], [21,2], [22,2], [23,0]  // finale
+];
+
+const SECTIONS = [
+  { startTime: 0,  speedMultiplier: 1.00, name:'INTRO'  },
+  { startTime: 16, speedMultiplier: 1.25, name:'CHORUS' },
+  { startTime: 32, speedMultiplier: 1.55, name:'FINALE' }
+];
+
+const SONG_DURATION = BAR_PLAN.length * BAR;   // 48s
+const SONG_TAIL     = 2.0;                     // grace after the last note
+
+/* ---------------------------------------------------------------
+   3a. Build the musical event list + the raw chart seeds.
+   --------------------------------------------------------------- */
+function buildSong(){
+  const events = [];   // { t, k:'lead'|'bass'|'pad'|'kick'|'snare'|'hat'|'crash', ... }
+  const seeds  = [];   // { time, pitch, poolIndex, lenBeats, isChordAdd }
+
+  const BASS_PATTERN = {
+    light: [0, 1.5, 2, 3],
+    fill:  [0, 1.5, 2, 2.5, 3, 3.5],
+    full:  [0, 0.75, 1.5, 2, 2.75, 3.5],
+    drive: [0, .5, 1, 1.5, 2, 2.5, 3, 3.5],
+    crash: [0, 2]
+  };
+
+  for (let bar = 0; bar < BAR_PLAN.length; bar++){
+    const [chordName, patternName, drumMode] = BAR_PLAN[bar];
+    const chord = CHORDS[chordName];
+    const t0 = bar * BAR;
+
+    /* --- lead melody: audible note AND a tile ------------------- */
+    for (const [beat, idx, lenBeats] of PATTERNS[patternName]){
+      const t   = t0 + beat * SPB;
+      const dur = lenBeats * SPB;
+      const midi = chord.pool[idx];
+      events.push({ t, k:'lead', midi, dur: Math.min(dur, 1.6) });
+      seeds.push({ time:t, pitch:midi, poolIndex:idx, lenBeats, isChordAdd:false });
+    }
+
+    /* --- pad ---------------------------------------------------- */
+    for (const beat of [0, 2]){
+      for (const midi of chord.voice){
+        events.push({ t: t0 + beat*SPB, k:'pad', midi, dur: 2*SPB*0.92 });
+      }
+    }
+
+    /* --- bass --------------------------------------------------- */
+    for (const beat of BASS_PATTERN[drumMode]){
+      events.push({ t: t0 + beat*SPB, k:'bass', midi: chord.bass, dur: SPB*0.72 });
+    }
+
+    /* --- drums -------------------------------------------------- */
+    if (drumMode !== 'crash'){
+      events.push({ t:t0 + 0*SPB, k:'kick' });
+      events.push({ t:t0 + 2*SPB, k:'kick' });
+      if (drumMode === 'full' || drumMode === 'drive' || drumMode === 'fill'){
+        events.push({ t:t0 + 2.75*SPB, k:'kick' });
+      }
+      events.push({ t:t0 + 1*SPB, k:'snare' });
+      events.push({ t:t0 + 3*SPB, k:'snare' });
+      const hatStep = (drumMode === 'drive') ? 0.25 : (drumMode === 'light' ? 1 : 0.5);
+      for (let b = 0; b < 4; b += hatStep){
+        events.push({ t:t0 + b*SPB, k:'hat', open: (b % 2 === 1.5) });
+      }
+      if (drumMode === 'fill'){
+        for (const b of [3.25, 3.5, 3.75]) events.push({ t:t0 + b*SPB, k:'snare', ghost:true });
+      }
+    } else {
+      events.push({ t:t0, k:'kick' });
+      events.push({ t:t0, k:'crash' });
+    }
+    if (bar === 8 || bar === 16) events.push({ t:t0, k:'crash' });
+  }
+
+  /* --- simultaneous (chord) tiles ------------------------------- */
+  for (const [bar, beat] of CHORD_HITS){
+    const chord = CHORDS[BAR_PLAN[bar][0]];
+    const t = bar*BAR + beat*SPB;
+    const midi = chord.pool[0];
+    events.push({ t, k:'lead', midi, dur: SPB*0.9 });
+    seeds.push({ time:t, pitch:midi, poolIndex:0, lenBeats:1, isChordAdd:true });
+  }
+
+  events.sort((a,b) => a.t - b.t);
+  seeds.sort((a,b) => a.time - b.time || a.poolIndex - b.poolIndex);
+  return { events, seeds };
+}
+
+/* ---------------------------------------------------------------
+   3b. Turn the seeds into a playable 4-lane chart.
+   Lane comes from melodic contour: pitches are split into four quartiles
+   over the whole song, so low notes live on the left and high notes on the
+   right AND every lane gets used a fair share. A constraint pass then
+   guarantees:
+     - no two tiles in the same lane closer than MIN_LANE_GAP
+     - a hold never overlaps a later tile in its own lane
+     - never more than 2 consecutive tiles in one lane
+   --------------------------------------------------------------- */
+/* Must stay above CONFIG.TAP_NOTE_SECONDS or tiles in a lane would overlap. */
+const MIN_LANE_GAP = 0.27;                       // seconds between same-lane tiles
+
+/** Quartile split of every pitch in the song -> a balanced pitch->lane map. */
+function makeLaneMapper(seeds){
+  const sorted = seeds.map(s => s.pitch).sort((a,b) => a-b);
+  const at = f => sorted[Math.min(sorted.length-1, Math.floor(sorted.length*f))];
+  const cuts = [at(0.25), at(0.50), at(0.75)];
+  return p => p < cuts[0] ? 0 : p < cuts[1] ? 1 : p < cuts[2] ? 2 : 3;
+}
+
+function buildChart(seeds){
+  const rng = makeRng(0x5eed1234);
+  const laneOf = makeLaneMapper(seeds);
+  const laneFreeAt = [0,0,0,0].map(() => -99);   // when each lane is next usable
+  const recentLanes = [];
+  const notes = [];
+  let nextId = 1;
+
+  for (const s of seeds){
+    const isHold  = s.lenBeats >= 1.5;
+    const holdDur = isHold ? Math.max(CONFIG.HOLD_MIN_SECONDS, s.lenBeats*SPB - 0.06) : 0;
+    const want    = laneOf(s.pitch);
+
+    /* Candidate lanes, nearest to the "musical" lane first. */
+    const order = [want];
+    for (let d = 1; d <= 3; d++){
+      const a = want - d, b = want + d;
+      if (rng() < 0.5){ if (a>=0) order.push(a); if (b<=3) order.push(b); }
+      else            { if (b<=3) order.push(b); if (a>=0) order.push(a); }
+    }
+
+    let lane = -1;
+    for (const cand of order){
+      if (s.time < laneFreeAt[cand]) continue;                       // lane still busy
+      const n = recentLanes.length;
+      if (n >= 2 && recentLanes[n-1] === cand && recentLanes[n-2] === cand) continue; // 3-in-a-row
+      lane = cand; break;
+    }
+    if (lane < 0){                                                   // fall back: least busy lane
+      lane = 0;
+      for (let i=1;i<4;i++) if (laneFreeAt[i] < laneFreeAt[lane]) lane = i;
+      if (s.time < laneFreeAt[lane]) continue;                       // truly unplaceable -> drop
+    }
+
+    laneFreeAt[lane] = s.time + holdDur + MIN_LANE_GAP;
+    recentLanes.push(lane);
+    if (recentLanes.length > 4) recentLanes.shift();
+
+    notes.push({
+      id: nextId++,
+      time: s.time,
+      lane,
+      type: isHold ? 'hold' : 'tap',
+      duration: holdDur,
+      /* runtime state */
+      state: 'pending',       // pending | holding | hit | complete | missed | broken
+      pointerId: null,
+      judge: null
+    });
+  }
+  notes.sort((a,b) => a.time - b.time);
+  return notes;
+}
+
+const SONG_BUILD = buildSong();
+const SONG_DATA = {
+  title:     'NEON CASCADE',
+  duration:  SONG_DURATION,
+  sections:  SECTIONS,
+  events:    SONG_BUILD.events,
+  chart:     buildChart(SONG_BUILD.seeds)
+};
+
+/* ================================================================
+   4. AUDIO MANAGER
+   Synthesises the whole track with the Web Audio API — zero external
+   assets. The AudioContext clock is the master clock for the game.
+   ================================================================ */
+class AudioManager {
+  constructor(){
+    this.ctx = null;
+    this.ready = false;
+    this.startCtxTime = 0;    // ctx time at which songTime === 0
+    this.cursor = 0;          // index into SONG_DATA.events
+    this.live = [];           // scheduled nodes we may need to kill on pause
+    this.paused = false;
+    this.pausedAt = 0;
+    this.noiseBuf = null;
+  }
+
+  /** Must be called from inside a user-gesture handler (iOS). */
+  async unlock(){
+    if (!this.ctx){
+      const AC = window.AudioContext || window.webkitAudioContext;
+      this.ctx = new AC();
+      this._buildGraph();
+    }
+    /* Classic iOS unlock: play one silent buffer synchronously inside the
+       gesture, BEFORE any await breaks the user-activation chain. */
+    const b = this.ctx.createBuffer(1, 1, this.ctx.sampleRate);
+    const s = this.ctx.createBufferSource();
+    s.buffer = b; s.connect(this.ctx.destination); s.start(0);
+    if (this.ctx.state !== 'running'){
+      try { await this.ctx.resume(); } catch(e){ /* ignore */ }
+    }
+    this.ready = true;
+    return this.ctx.state === 'running';
+  }
+
+  _buildGraph(){
+    const ctx = this.ctx;
+
+    this.master = ctx.createGain();
+    this.master.gain.value = 0.95;
+
+    this.comp = ctx.createDynamicsCompressor();
+    this.comp.threshold.value = -14;
+    this.comp.knee.value = 26;
+    this.comp.ratio.value = 4;
+    this.comp.attack.value = 0.004;
+    this.comp.release.value = 0.22;
+
+    this.master.connect(this.comp);
+    this.comp.connect(ctx.destination);
+
+    const bus = (g, extra) => {
+      const n = ctx.createGain(); n.gain.value = g;
+      if (extra){ n.connect(extra); extra.connect(this.master); } else n.connect(this.master);
+      return n;
+    };
+
+    /* A gentle low-pass keeps the pad from fighting the lead. */
+    this.padFilter = ctx.createBiquadFilter();
+    this.padFilter.type = 'lowpass';
+    this.padFilter.frequency.value = 1500;
+
+    this.leadBus  = bus(0.20);
+    this.bassBus  = bus(0.30);
+    this.padBus   = bus(0.11, this.padFilter);
+    this.drumBus  = bus(0.42);
+    this.sfxBus   = bus(0.22);
+
+    /* Pre-render one second of white noise for the drums. */
+    const len = Math.floor(ctx.sampleRate);
+    const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i=0;i<len;i++) d[i] = Math.random()*2 - 1;
+    this.noiseBuf = buf;
+  }
+
+  /* ---- current song time (the master clock) --------------------- */
+  get songTime(){
+    if (!this.ctx) return 0;
+    if (this.paused) return this.pausedAt;
+    return this.ctx.currentTime - this.startCtxTime + CONFIG.AUDIO_OFFSET_S;
+  }
+
+  /** Begin the song `delay` seconds from now (used for the countdown). */
+  start(delay){
+    /* Silence anything still ringing out from a previous run before we
+       restore the master gain, otherwise a fast RETRY un-mutes its tail. */
+    this._killLive();
+    this.cursor = 0;
+    this.paused = false;
+    this.startCtxTime = this.ctx.currentTime + delay;
+    this.master.gain.cancelScheduledValues(this.ctx.currentTime);
+    this.master.gain.setValueAtTime(0.95, this.ctx.currentTime);
+  }
+
+  stop(fade = 0.35){
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this.master.gain.cancelScheduledValues(t);
+    this.master.gain.setValueAtTime(this.master.gain.value, t);
+    this.master.gain.linearRampToValueAtTime(0.0001, t + fade);
+    this.cursor = SONG_DATA.events.length;
+    /* Hand the doomed nodes to the timer and hand `live` a fresh array, so a
+       run started during the fade never has its own nodes killed. */
+    const doomed = this.live;
+    this.live = [];
+    setTimeout(() => { for (const n of doomed){ try { n.stop(0); } catch(e){} } },
+               (fade + 0.05) * 1000);
+  }
+
+  pause(){
+    if (this.paused || !this.ctx) return;
+    this.pausedAt = this.songTime;
+    this.paused = true;
+    this._killLive();
+  }
+
+  resume(delay){
+    if (!this.paused) return;
+    const from = this.pausedAt;
+    /* rewind the scheduler to the first event at or after the resume point */
+    this.cursor = 0;
+    while (this.cursor < SONG_DATA.events.length && SONG_DATA.events[this.cursor].t < from) this.cursor++;
+    this.startCtxTime = this.ctx.currentTime + delay - from;
+    this.master.gain.cancelScheduledValues(this.ctx.currentTime);
+    this.master.gain.setValueAtTime(0.95, this.ctx.currentTime);
+    this.paused = false;
+  }
+
+  _killLive(){
+    for (const n of this.live){ try { n.stop(0); } catch(e){} }
+    this.live.length = 0;
+  }
+
+  /** Queue everything that falls inside the look-ahead window. */
+  schedule(){
+    if (!this.ctx || this.paused) return;
+    const now = this.songTime;
+    const horizon = now + CONFIG.SCHEDULE_AHEAD_S;
+    const evs = SONG_DATA.events;
+    while (this.cursor < evs.length && evs[this.cursor].t <= horizon){
+      const ev = evs[this.cursor++];
+      const when = this.startCtxTime + ev.t;
+      if (when < this.ctx.currentTime - 0.05) continue;   // too late, skip
+      this._render(ev, Math.max(when, this.ctx.currentTime));
+    }
+    /* keep the live list from growing without bound */
+    if (this.live.length > 220) this.live.splice(0, this.live.length - 220);
+  }
+
+  _render(ev, when){
+    switch (ev.k){
+      case 'lead':  this._lead(ev.midi, when, ev.dur); break;
+      case 'bass':  this._bass(ev.midi, when, ev.dur); break;
+      case 'pad':   this._pad(ev.midi, when, ev.dur);  break;
+      case 'kick':  this._kick(when);                  break;
+      case 'snare': this._snare(when, ev.ghost);       break;
+      case 'hat':   this._hat(when, ev.open);          break;
+      case 'crash': this._crash(when);                 break;
+    }
+  }
+
+  /* ---- voices ---------------------------------------------------- */
+  _osc(type, freq, when, detune){
+    const o = this.ctx.createOscillator();
+    o.type = type;
+    o.frequency.setValueAtTime(freq, when);
+    if (detune) o.detune.setValueAtTime(detune, when);
+    this.live.push(o);
+    return o;
+  }
+
+  _lead(midi, when, dur){
+    const f = midiToFreq(midi);
+    const g = this.ctx.createGain();
+    const peak = 0.9, atk = 0.008, rel = 0.10;
+    const end = when + Math.max(dur, 0.12);
+    g.gain.setValueAtTime(0.0001, when);
+    g.gain.exponentialRampToValueAtTime(peak, when + atk);
+    g.gain.exponentialRampToValueAtTime(peak*0.55, when + atk + 0.09);
+    g.gain.setValueAtTime(peak*0.55, Math.max(end - rel, when + atk + 0.09));
+    g.gain.exponentialRampToValueAtTime(0.0001, end + rel);
+    g.connect(this.leadBus);
+
+    const a = this._osc('square', f, when, -5);
+    const b = this._osc('triangle', f*2, when, +6);
+    const bg = this.ctx.createGain(); bg.gain.value = 0.35;
+    a.connect(g); b.connect(bg); bg.connect(g);
+    a.start(when); b.start(when);
+    a.stop(end + rel + 0.03); b.stop(end + rel + 0.03);
+  }
+
+  _bass(midi, when, dur){
+    const f = midiToFreq(midi);
+    const g = this.ctx.createGain();
+    const end = when + dur;
+    g.gain.setValueAtTime(0.0001, when);
+    g.gain.exponentialRampToValueAtTime(1.0, when + 0.006);
+    g.gain.exponentialRampToValueAtTime(0.0001, end + 0.05);
+    g.connect(this.bassBus);
+
+    const o  = this._osc('triangle', f, when);
+    const o2 = this._osc('sawtooth', f, when, +8);
+    const g2 = this.ctx.createGain(); g2.gain.value = 0.22;
+    o.connect(g); o2.connect(g2); g2.connect(g);
+    o.start(when); o2.start(when);
+    o.stop(end + 0.08); o2.stop(end + 0.08);
+  }
+
+  _pad(midi, when, dur){
+    const f = midiToFreq(midi);
+    const g = this.ctx.createGain();
+    const end = when + dur;
+    g.gain.setValueAtTime(0.0001, when);
+    g.gain.exponentialRampToValueAtTime(0.8, when + 0.11);
+    g.gain.exponentialRampToValueAtTime(0.0001, end + 0.12);
+    g.connect(this.padBus);
+    const o = this._osc('sawtooth', f, when, -7);
+    o.connect(g); o.start(when); o.stop(end + 0.16);
+  }
+
+  _kick(when){
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(1.1, when);
+    g.gain.exponentialRampToValueAtTime(0.0001, when + 0.30);
+    g.connect(this.drumBus);
+    const o = this._osc('sine', 150, when);
+    o.frequency.exponentialRampToValueAtTime(44, when + 0.12);
+    o.connect(g); o.start(when); o.stop(when + 0.34);
+  }
+
+  _snare(when, ghost){
+    const amp = ghost ? 0.28 : 1.0;
+    const n = this.ctx.createBufferSource();
+    n.buffer = this.noiseBuf; n.loop = true;
+    const bp = this.ctx.createBiquadFilter();
+    bp.type = 'bandpass'; bp.frequency.value = 1900; bp.Q.value = 0.9;
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.85*amp, when);
+    g.gain.exponentialRampToValueAtTime(0.0001, when + (ghost ? 0.07 : 0.17));
+    n.connect(bp); bp.connect(g); g.connect(this.drumBus);
+    n.start(when); n.stop(when + 0.22);
+    this.live.push(n);
+
+    if (!ghost){                                  // body
+      const bg = this.ctx.createGain();
+      bg.gain.setValueAtTime(0.35, when);
+      bg.gain.exponentialRampToValueAtTime(0.0001, when + 0.10);
+      bg.connect(this.drumBus);
+      const o = this._osc('triangle', 195, when);
+      o.connect(bg); o.start(when); o.stop(when + 0.13);
+    }
+  }
+
+  _hat(when, open){
+    const n = this.ctx.createBufferSource();
+    n.buffer = this.noiseBuf; n.loop = true;
+    const hp = this.ctx.createBiquadFilter();
+    hp.type = 'highpass'; hp.frequency.value = 7600;
+    const g = this.ctx.createGain();
+    const d = open ? 0.16 : 0.045;
+    g.gain.setValueAtTime(open ? 0.32 : 0.24, when);
+    g.gain.exponentialRampToValueAtTime(0.0001, when + d);
+    n.connect(hp); hp.connect(g); g.connect(this.drumBus);
+    n.start(when); n.stop(when + d + 0.03);
+    this.live.push(n);
+  }
+
+  _crash(when){
+    const n = this.ctx.createBufferSource();
+    n.buffer = this.noiseBuf; n.loop = true;
+    const hp = this.ctx.createBiquadFilter();
+    hp.type = 'highpass'; hp.frequency.value = 4200;
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.34, when);
+    g.gain.exponentialRampToValueAtTime(0.0001, when + 1.1);
+    n.connect(hp); hp.connect(g); g.connect(this.drumBus);
+    n.start(when); n.stop(when + 1.2);
+    this.live.push(n);
+  }
+
+  /* ---- one-shot gameplay SFX (fired outside the schedule) -------- */
+  sfx(kind, combo = 0){
+    if (!this.ctx || this.ctx.state !== 'running') return;
+    const t = this.ctx.currentTime;
+    if (kind === 'hit' || kind === 'hold'){
+      const PENT = [72,74,76,79,81,84];
+      const midi = PENT[Math.min(PENT.length-1, Math.floor(combo/6))] + (kind==='hold'?12:0);
+      const g = this.ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.9, t + 0.004);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
+      g.connect(this.sfxBus);
+      const o = this._osc('sine', midiToFreq(midi), t);
+      o.connect(g); o.start(t); o.stop(t + 0.2);
+    } else if (kind === 'fail'){
+      const g = this.ctx.createGain();
+      g.gain.setValueAtTime(0.6, t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.55);
+      g.connect(this.sfxBus);
+      const o = this._osc('sawtooth', 220, t);
+      o.frequency.exponentialRampToValueAtTime(55, t + 0.5);
+      o.connect(g); o.start(t); o.stop(t + 0.6);
+    } else if (kind === 'miss'){
+      const g = this.ctx.createGain();
+      g.gain.setValueAtTime(0.45, t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
+      g.connect(this.sfxBus);
+      const o = this._osc('square', 150, t);
+      o.connect(g); o.start(t); o.stop(t + 0.24);
+    }
+  }
+}
+
+/* ================================================================
+   5. PARTICLE SYSTEM (fixed-size object pool)
+   ================================================================ */
+class ParticleSystem {
+  constructor(){
+    this.pool = new Array(CONFIG.MAX_PARTICLES);
+    for (let i=0;i<CONFIG.MAX_PARTICLES;i++){
+      this.pool[i] = { active:false, x:0,y:0,vx:0,vy:0,life:0,max:1,size:4,hue:200,kind:'spark',rot:0,vr:0 };
+    }
+    this.cursor = 0;
+  }
+  _take(){
+    for (let i=0;i<CONFIG.MAX_PARTICLES;i++){
+      const p = this.pool[this.cursor];
+      this.cursor = (this.cursor+1) % CONFIG.MAX_PARTICLES;
+      if (!p.active) return p;
+    }
+    return null;
+  }
+  burst(x, y, hue, power = 1){
+    const n = Math.round(13 * power);
+    for (let i=0;i<n;i++){
+      const p = this._take(); if (!p) return;
+      const a = (Math.PI*2*i)/n + Math.random()*0.5;
+      const sp = (240 + Math.random()*520) * power;
+      p.active = true; p.kind='spark';
+      p.x = x; p.y = y;
+      p.vx = Math.cos(a)*sp;
+      p.vy = Math.sin(a)*sp*0.72 - 180*power;
+      p.max = p.life = 0.34 + Math.random()*0.36;
+      p.size = 4 + Math.random()*7*power;
+      p.hue = hue + (Math.random()*46 - 23);
+    }
+    const r = this._take();
+    if (r){
+      r.active = true; r.kind='ring';
+      r.x = x; r.y = y; r.vx = 0; r.vy = 0;
+      r.max = r.life = 0.34; r.size = 26*power; r.hue = hue;
+    }
+  }
+  shards(x, y, w, hue){
+    for (let i=0;i<7;i++){
+      const p = this._take(); if (!p) return;
+      p.active = true; p.kind='shard';
+      p.x = x + (Math.random()-0.5)*w;
+      p.y = y + (Math.random()-0.5)*40;
+      p.vx = (Math.random()-0.5)*560;
+      p.vy = -160 - Math.random()*380;
+      p.max = p.life = 0.5 + Math.random()*0.35;
+      p.size = 10 + Math.random()*16;
+      p.hue = hue; p.rot = Math.random()*Math.PI; p.vr = (Math.random()-0.5)*11;
+    }
+  }
+  update(dt){
+    for (const p of this.pool){
+      if (!p.active) continue;
+      p.life -= dt;
+      if (p.life <= 0){ p.active = false; continue; }
+      p.x += p.vx*dt; p.y += p.vy*dt;
+      if (p.kind !== 'ring'){ p.vy += 2100*dt; p.vx *= 0.985; }
+      if (p.kind === 'shard') p.rot += p.vr*dt;
+    }
+  }
+  draw(ctx){
+    for (const p of this.pool){
+      if (!p.active) continue;
+      const t = p.life / p.max;
+      ctx.globalAlpha = t;
+      if (p.kind === 'ring'){
+        const r = p.size + (1-t)*140;
+        ctx.strokeStyle = `hsl(${p.hue},100%,72%)`;
+        ctx.lineWidth = 5*t + 1;
+        ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI*2); ctx.stroke();
+      } else if (p.kind === 'shard'){
+        ctx.save();
+        ctx.translate(p.x, p.y); ctx.rotate(p.rot);
+        ctx.fillStyle = `hsl(${p.hue},90%,${52+18*t}%)`;
+        ctx.fillRect(-p.size/2, -p.size/5, p.size, p.size/2.5);
+        ctx.restore();
+      } else {
+        ctx.fillStyle = `hsl(${p.hue},100%,${58+26*t}%)`;
+        ctx.beginPath(); ctx.arc(p.x, p.y, p.size*t + 0.6, 0, Math.PI*2); ctx.fill();
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+  clear(){ for (const p of this.pool) p.active = false; }
+}
+
+/* ================================================================
+   6. FLOATING SCORE POPUPS (pool)
+   ================================================================ */
+class PopupSystem {
+  constructor(){
+    this.pool = new Array(CONFIG.MAX_POPUPS);
+    for (let i=0;i<CONFIG.MAX_POPUPS;i++)
+      this.pool[i] = { active:false, x:0,y:0,life:0,max:1,text:'',sub:'',color:'#fff',size:44 };
+    this.cursor = 0;
+  }
+  /** `bound` is the logical screen width; popups are centre-drawn, so keep
+      them clear of the edges or lane-3 text runs off the screen. */
+  spawn(x, y, text, sub, color, size = 46, bound = 0){
+    if (bound) x = clamp(x, bound*0.16, bound*0.84);
+    let p = null;
+    for (let i=0;i<CONFIG.MAX_POPUPS;i++){
+      const c = this.pool[this.cursor];
+      this.cursor = (this.cursor+1) % CONFIG.MAX_POPUPS;
+      if (!c.active){ p = c; break; }
+    }
+    if (!p) p = this.pool[0];
+    p.active = true; p.x = x; p.y = y;
+    p.max = p.life = 0.78; p.text = text; p.sub = sub; p.color = color; p.size = size;
+  }
+  update(dt){
+    for (const p of this.pool){
+      if (!p.active) continue;
+      p.life -= dt;
+      if (p.life <= 0){ p.active = false; continue; }
+      p.y -= 190*dt;
+    }
+  }
+  draw(ctx){
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    for (const p of this.pool){
+      if (!p.active) continue;
+      const t = p.life / p.max;
+      const grow = t > 0.82 ? 1 + (t-0.82)*3.2 : 1;   // quick pop on spawn
+      ctx.globalAlpha = Math.min(1, t*1.8);
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.scale(grow, grow);
+      ctx.fillStyle = p.color;
+      ctx.font = `900 ${p.size}px "Avenir Next",Helvetica,Arial,sans-serif`;
+      ctx.fillText(p.text, 0, 0);
+      if (p.sub){
+        ctx.globalAlpha = Math.min(1, t*1.8)*0.85;
+        ctx.font = `800 ${p.size*0.48}px "Avenir Next",Helvetica,Arial,sans-serif`;
+        ctx.fillText(p.sub, 0, p.size*0.72);
+      }
+      ctx.restore();
+    }
+    ctx.globalAlpha = 1;
+  }
+  clear(){ for (const p of this.pool) p.active = false; }
+}
+
+/* ================================================================
+   7. SCORE MANAGER
+   ================================================================ */
+class ScoreManager {
+  constructor(){ this.reset(); }
+  reset(){
+    this.score = 0;
+    this.combo = 0;
+    this.maxCombo = 0;
+    this.hits = 0;
+    this.resolved = 0;         // notes that produced a hit or a miss
+    this.perfect = 0;
+    this.holdsDone = 0;
+    this.consecutiveMisses = 0;
+  }
+  get multiplier(){
+    const T = CONFIG.COMBO_TIERS;
+    let m = 1;
+    for (let i=0;i<T.length;i++) if (this.combo >= T[i]) m = i + 2;
+    return m;
+  }
+  award(base){
+    const gained = base * this.multiplier;
+    this.score += gained;
+    return gained;
+  }
+  registerHit(judgeKey){
+    this.combo++;
+    if (this.combo > this.maxCombo) this.maxCombo = this.combo;
+    this.hits++; this.resolved++;
+    this.consecutiveMisses = 0;
+    if (judgeKey === 'PERFECT') this.perfect++;
+    return this.award(JUDGE[judgeKey].score);
+  }
+  registerHoldComplete(){
+    this.holdsDone++;
+    return this.award(CONFIG.SCORE_HOLD_COMPLETE);
+  }
+  registerMiss(){
+    this.combo = 0;
+    this.resolved++;
+    this.consecutiveMisses++;
+    return this.consecutiveMisses;
+  }
+  breakCombo(){ this.combo = 0; }
+  get accuracy(){ return this.resolved === 0 ? 0 : this.hits / this.resolved; }
+}
+
+/* ================================================================
+   8. GAME  (state machine, layout, loop, input, rendering)
+   ================================================================ */
+const STATE = { MENU:'MENU', COUNTDOWN:'COUNTDOWN', PLAYING:'PLAYING',
+                ROUND_OVER:'ROUND_OVER', RESULTS:'RESULTS', PAUSED:'PAUSED' };
+
+const FAIL_REASON = {
+  WRONG_TAP:    'YOU TAPPED EMPTY SPACE',
+  TOO_EARLY:    'YOU TAPPED A TILE TOO EARLY',
+  MISSES:       'THREE TILES SLIPPED PAST',
+  HOLD_SLIP:    'YOUR FINGER LEFT THE HOLD',
+  HOLD_EARLY:   'YOU RELEASED THE HOLD EARLY',
+  CLEARED:      'SONG COMPLETE',
+  QUIT:         'RUN ENDED'
+};
+
+class Game {
+  constructor(){
+    this.canvas = document.getElementById('game');
+    this.ctx = this.canvas.getContext('2d', { alpha:false, desynchronized:true });
+
+    this.audio = new AudioManager();
+    this.particles = new ParticleSystem();
+    this.popups = new PopupSystem();
+    this.score = new ScoreManager();
+
+    this.state = STATE.MENU;
+    this.notes = [];
+    this.firstLive = 0;                 // sliding window start into this.notes
+    this.pointers = new Map();          // pointerId -> touch record
+
+    /* FX state */
+    this.laneFlash = [0,0,0,0];
+    this.laneHold  = [0,0,0,0];
+    this.strikePulse = 0;
+    this.shake = 0;
+    this.redFlash = 0;
+    this.banner = null;                 // { text, sub, life, max }
+    this.lastSectionIdx = 0;
+
+    this.lastFrame = 0;
+    this.lastSongTime = 0;
+    this.countdownEnd = 0;
+    this.roundOverAt = 0;
+    this.failReason = null;
+    this.pauseFromState = null;
+
+    this._cacheDom();
+    this._bindUi();
+    this._bindInput();
+
+    this._resize();
+    window.addEventListener('resize', () => this._resize());
+    window.addEventListener('orientationchange', () => setTimeout(() => this._resize(), 250));
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden && (this.state === STATE.PLAYING || this.state === STATE.COUNTDOWN)) {
+        this.pauseGame();
+      }
+    });
+
+    this.loop = this.loop.bind(this);
+    requestAnimationFrame(this.loop);
+  }
+
+  /* ---------------- DOM ---------------------------------------- */
+  _cacheDom(){
+    const $ = id => document.getElementById(id);
+    this.dom = {
+      hud:$('hud'), score:$('score'), combo:$('combo'), comboBox:$('comboBox'),
+      mult:$('mult'), pips:Array.from(document.querySelectorAll('#pips .pip')),
+      progressFill:$('progressFill'), songSection:$('songSection'), songTitle:$('songTitle'),
+      startOverlay:$('startOverlay'), resultOverlay:$('resultOverlay'), pauseOverlay:$('pauseOverlay'),
+      startBtn:$('startBtn'), retryBtn:$('retryBtn'), menuBtn:$('menuBtn'),
+      resumeBtn:$('resumeBtn'), quitBtn:$('quitBtn'),
+      resultTitle:$('resultTitle'), resultReason:$('resultReason'), finalScore:$('finalScore'),
+      statCombo:$('statCombo'), statAcc:$('statAcc'), statProg:$('statProg')
+    };
+    this.dom.songTitle.textContent = SONG_DATA.title;
+    this._hudCache = {};
+  }
+
+  _bindUi(){
+    const tap = (el, fn) => {
+      el.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); fn(); });
+    };
+    tap(this.dom.startBtn,  () => this.startRun());
+    tap(this.dom.retryBtn,  () => this.startRun());
+    tap(this.dom.menuBtn,   () => this.toMenu());
+    tap(this.dom.resumeBtn, () => this.resumeGame());
+    tap(this.dom.quitBtn,   () => { this.endRound(FAIL_REASON.QUIT, false); });
+  }
+
+  /* ---------------- LAYOUT ------------------------------------- */
+  _resize(){
+    const cssW = window.innerWidth;
+    const cssH = window.innerHeight;
+    const dpr  = Math.min(window.devicePixelRatio || 1, CONFIG.DPR_CAP);
+
+    this.canvas.width  = Math.round(cssW * dpr);
+    this.canvas.height = Math.round(cssH * dpr);
+    this.canvas.style.width  = cssW + 'px';
+    this.canvas.style.height = cssH + 'px';
+
+    /* logical space: fixed width, derived height => no letterboxing */
+    this.scale = cssW / CONFIG.LOGICAL_W;
+    this.LW = CONFIG.LOGICAL_W;
+    this.LH = cssH / this.scale;
+    this.renderScale = dpr * this.scale;
+
+    /* playfield: full width in portrait, centred column in landscape */
+    this.fieldW = Math.min(this.LW, this.LH * CONFIG.PLAYFIELD_ASPECT);
+    this.fieldX = (this.LW - this.fieldW) / 2;
+    this.laneW  = this.fieldW / CONFIG.LANE_COUNT;
+
+    this.strikeY = this.LH * CONFIG.STRIKE_Y_RATIO;
+    this.basePxPerSec = this.strikeY / CONFIG.LEAD_TIME;
+
+    this._buildBgLayer();
+  }
+
+  /** The static backdrop (gradients, playfield panel, lane separators) is
+      expensive to fill at 2x on an older iPad, and it never changes. Render
+      it once into an offscreen canvas and blit it every frame instead. */
+  _buildBgLayer(){
+    if (!this.bgCanvas) this.bgCanvas = document.createElement('canvas');
+    this.bgCanvas.width  = this.canvas.width;
+    this.bgCanvas.height = this.canvas.height;
+    const c = this.bgCanvas.getContext('2d');
+    c.setTransform(this.renderScale, 0, 0, this.renderScale, 0, 0);
+
+    const bg = c.createLinearGradient(0, 0, 0, this.LH);
+    bg.addColorStop(0,    '#080c1a');
+    bg.addColorStop(0.55, '#060913');
+    bg.addColorStop(1,    '#03050c');
+    c.fillStyle = bg;
+    c.fillRect(0, 0, this.LW, this.LH);
+
+    c.fillStyle = 'rgba(255,255,255,0.022)';
+    c.fillRect(this.fieldX, 0, this.fieldW, this.LH);
+
+    const fg = c.createLinearGradient(0, 0, 0, this.strikeY);
+    fg.addColorStop(0,   'rgba(30,45,90,0.00)');
+    fg.addColorStop(0.7, 'rgba(30,50,100,0.16)');
+    fg.addColorStop(1,   'rgba(45,80,150,0.30)');
+    c.fillStyle = fg;
+    c.fillRect(this.fieldX, 0, this.fieldW, this.strikeY);
+
+    c.fillStyle = 'rgba(150,180,225,0.09)';
+    for (let i=1;i<CONFIG.LANE_COUNT;i++){
+      c.fillRect(this.laneX(i) - 1, 0, 2, this.strikeY + 90);
+    }
+  }
+
+  laneX(lane){ return this.fieldX + lane * this.laneW; }
+
+  /* ---------------- SPEED -------------------------------------- */
+  /** Speed multiplier, eased across section boundaries so tiles that
+      are already on screen glide instead of teleporting. */
+  speedMultiplierAt(t){
+    let i = 0;
+    while (i + 1 < SECTIONS.length && t >= SECTIONS[i+1].startTime) i++;
+    let m = SECTIONS[i].speedMultiplier;
+    if (i > 0){
+      const dt = t - SECTIONS[i].startTime;
+      if (dt < CONFIG.SECTION_LERP_S){
+        m = lerp(SECTIONS[i-1].speedMultiplier, m, clamp(dt / CONFIG.SECTION_LERP_S, 0, 1));
+      }
+    }
+    return m;
+  }
+  sectionIndexAt(t){
+    let i = 0;
+    while (i + 1 < SECTIONS.length && t >= SECTIONS[i+1].startTime) i++;
+    return i;
+  }
+  get pxPerSec(){ return this.basePxPerSec * this.speedMultiplierAt(this.songTime); }
+
+  /* ---------------- NOTE GEOMETRY ------------------------------
+     A note's BOTTOM edge sits exactly on the strike line at note.time.
+     Everything else follows from that. --------------------------- */
+  noteRect(note, songTime, pps){
+    const bottom = this.strikeY + (songTime - note.time) * pps;
+    const h = note.type === 'hold'
+      ? Math.max(note.duration * pps, CONFIG.TAP_NOTE_SECONDS * pps)
+      : CONFIG.TAP_NOTE_SECONDS * pps;
+    const x = this.laneX(note.lane) + CONFIG.NOTE_SIDE_INSET;
+    const w = this.laneW - CONFIG.NOTE_SIDE_INSET*2;
+    return { x, y: bottom - h, w, h, bottom, top: bottom - h };
+  }
+
+  /* ---------------- RUN LIFECYCLE ------------------------------ */
+  async startRun(){
+    this.dom.startBtn.disabled = true;
+    const ok = await this.audio.unlock();
+    this.dom.startBtn.disabled = false;
+    if (!ok && this.audio.ctx && this.audio.ctx.state !== 'running'){
+      /* Extremely rare on iOS after a real tap; try once more next tap. */
+      return;
+    }
+
+    /* fresh copy of the chart */
+    this.notes = SONG_DATA.chart.map(n => ({
+      id:n.id, time:n.time, lane:n.lane, type:n.type, duration:n.duration,
+      state:'pending', pointerId:null, judge:null, holdProgress:0
+    }));
+    this.firstLive = 0;
+    this.pointers.clear();
+    this.score.reset();
+    this.particles.clear();
+    this.popups.clear();
+    this.laneFlash = [0,0,0,0];
+    this.laneHold = [0,0,0,0];
+    this.shake = 0; this.redFlash = 0; this.strikePulse = 0;
+    this.banner = null;
+    this.lastSectionIdx = 0;
+    this.failReason = null;
+    this._hudCache = {};
+
+    this.dom.startOverlay.classList.add('hidden');
+    this.dom.resultOverlay.classList.add('hidden');
+    this.dom.pauseOverlay.classList.add('hidden');
+    this.dom.hud.classList.add('on');
+    this._syncHud(true);
+
+    this.audio.start(CONFIG.COUNTDOWN_S);
+    this.countdownEnd = performance.now() + CONFIG.COUNTDOWN_S*1000;
+    this.state = STATE.COUNTDOWN;
+  }
+
+  toMenu(){
+    this.state = STATE.MENU;
+    this.audio.stop(0.2);
+    this.dom.hud.classList.remove('on');
+    this.dom.resultOverlay.classList.add('hidden');
+    this.dom.pauseOverlay.classList.add('hidden');
+    this.dom.startOverlay.classList.remove('hidden');
+  }
+
+  pauseGame(){
+    if (this.state !== STATE.PLAYING && this.state !== STATE.COUNTDOWN) return;
+    this.pauseFromState = this.state;
+    /* Any hold in flight is granted (silently, no points) rather than failed —
+       do not punish the player for a phone call or a notification. Leaving it
+       'pending' would make it register as a MISS the instant play resumes. */
+    for (const [, rec] of this.pointers){
+      const n = rec.note;
+      if (n && n.state === 'holding'){ n.state = 'complete'; n.pointerId = null; }
+    }
+    this.laneHold = [0,0,0,0];
+    this.pointers.clear();
+    this.audio.pause();
+    this.state = STATE.PAUSED;
+    this.dom.pauseOverlay.classList.remove('hidden');
+  }
+
+  resumeGame(){
+    if (this.state !== STATE.PAUSED) return;
+    this.dom.pauseOverlay.classList.add('hidden');
+    if (this.audio.ctx && this.audio.ctx.state !== 'running') this.audio.ctx.resume();
+    this.audio.resume(CONFIG.COUNTDOWN_S);
+    this.countdownEnd = performance.now() + CONFIG.COUNTDOWN_S*1000;
+    this.state = STATE.COUNTDOWN;
+  }
+
+  /** End the round. `harsh` drives the red flash / shake / fail sound. */
+  endRound(reason, harsh = true){
+    if (this.state === STATE.ROUND_OVER || this.state === STATE.RESULTS) return;
+    this.failReason = reason;
+    this.cleared = (reason === FAIL_REASON.CLEARED);
+    this.state = STATE.ROUND_OVER;
+    this.roundOverAt = performance.now();
+    this.pointers.clear();
+    this.audio.stop(this.cleared ? 0.8 : 0.35);
+    this.dom.pauseOverlay.classList.add('hidden');
+
+    if (harsh && !this.cleared){
+      this.redFlash = 1;
+      this.shake = 26;
+      this.audio.sfx('fail');
+      this.score.breakCombo();
+    }
+  }
+
+  showResults(){
+    this.state = STATE.RESULTS;
+    this.dom.hud.classList.remove('on');
+    const s = this.score;
+    this.dom.resultTitle.textContent = this.cleared ? 'SONG CLEARED' : 'ROUND OVER';
+    this.dom.resultTitle.style.color = this.cleared ? '#ffd54a' : '#ff6b78';
+    this.dom.resultReason.textContent = this.failReason || '';
+    this.dom.finalScore.textContent = s.score.toLocaleString();
+    this.dom.statCombo.textContent = s.maxCombo;
+    this.dom.statAcc.textContent = Math.round(s.accuracy*100) + '%';
+    const prog = clamp(this.lastSongTime / SONG_DATA.duration, 0, 1);
+    this.dom.statProg.textContent = Math.round(prog*100) + '%';
+    this.dom.resultOverlay.classList.remove('hidden');
+  }
+
+  /* ================================================================
+     INPUT
+     ================================================================ */
+  _bindInput(){
+    const el = this.canvas;
+    const opts = { passive:false };
+
+    if (window.PointerEvent){
+      el.addEventListener('pointerdown', e => {
+        e.preventDefault();
+        if (el.setPointerCapture) { try { el.setPointerCapture(e.pointerId); } catch(_){} }
+        this.onDown(e.pointerId, e.clientX, e.clientY);
+      }, opts);
+      el.addEventListener('pointermove', e => {
+        e.preventDefault();
+        /* coalesced events give sub-frame accuracy for hold tracking */
+        const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : null;
+        if (evs && evs.length){
+          for (const ce of evs) this.onMove(e.pointerId, ce.clientX, ce.clientY);
+        } else {
+          this.onMove(e.pointerId, e.clientX, e.clientY);
+        }
+      }, opts);
+      const up = e => { e.preventDefault(); this.onUp(e.pointerId); };
+      el.addEventListener('pointerup', up, opts);
+      el.addEventListener('pointercancel', up, opts);
+    } else {
+      /* Touch Events fallback for older iOS */
+      el.addEventListener('touchstart', e => {
+        e.preventDefault();
+        for (const t of e.changedTouches) this.onDown(t.identifier, t.clientX, t.clientY);
+      }, opts);
+      el.addEventListener('touchmove', e => {
+        e.preventDefault();
+        for (const t of e.changedTouches) this.onMove(t.identifier, t.clientX, t.clientY);
+      }, opts);
+      const up = e => {
+        e.preventDefault();
+        for (const t of e.changedTouches) this.onUp(t.identifier);
+      };
+      el.addEventListener('touchend', up, opts);
+      el.addEventListener('touchcancel', up, opts);
+    }
+    /* Belt and braces against Safari gestures. */
+    el.addEventListener('contextmenu', e => e.preventDefault());
+    document.addEventListener('gesturestart', e => e.preventDefault(), opts);
+    document.addEventListener('dblclick', e => e.preventDefault(), opts);
+  }
+
+  /** Screen (client) pixels -> logical game units. */
+  toLogical(clientX, clientY){
+    const r = this.canvas.getBoundingClientRect();
+    return { x: (clientX - r.left) / this.scale, y: (clientY - r.top) / this.scale };
+  }
+
+  laneFromX(x){
+    if (x < this.fieldX || x > this.fieldX + this.fieldW) return -1;
+    return clamp(Math.floor((x - this.fieldX) / this.laneW), 0, CONFIG.LANE_COUNT-1);
+  }
+
+  /** Is this note tappable right now (timing window)? */
+  _inWindow(note, songTime){
+    const dt = songTime - note.time;
+    return dt >= -CONFIG.HIT_EARLY_S && dt <= CONFIG.HIT_LATE_S;
+  }
+
+  /** Is (x,y) inside the note's rect, expanded by `tol`? */
+  _insideRect(r, x, y, tol){
+    return x >= r.x - tol && x <= r.x + r.w + tol &&
+           y >= r.top - tol && y <= r.bottom + tol;
+  }
+
+  /** Tappable zone for a note that is already inside its timing window.
+      It is the tile rectangle, stretched DOWNWARD to the strike line: the
+      line is the thing players actually aim at, so the empty sliver between
+      an approaching tile and the line must not read as "empty space". The
+      zone never grows upward, so a genuinely early tap still fails. */
+  _insideHitZone(r, x, y){
+    const tol = CONFIG.TOUCH_TOLERANCE_PX;
+    const bottom = Math.max(r.bottom, this.strikeY);
+    return x >= r.x - tol && x <= r.x + r.w + tol &&
+           y >= r.top - tol && y <= bottom + tol;
+  }
+
+  onDown(pid, cx, cy){
+    if (this.state !== STATE.PLAYING) return;
+    const { x, y } = this.toLogical(cx, cy);
+    const songTime = this.songTime;
+    const pps = this.pxPerSec;
+    const lane = this.laneFromX(x);
+
+    if (lane < 0){
+      /* Outside the playfield entirely (landscape margins) — ignore rather
+         than punish; the tiles never live there. */
+      return;
+    }
+
+    /* Find the best candidate note in this lane: inside the rect, in the
+       timing window, closest to its ideal time. */
+    let best = null, bestAbs = Infinity, alreadyHeld = false, tooEarly = false;
+
+    for (let i = this.firstLive; i < this.notes.length; i++){
+      const n = this.notes[i];
+      if (n.time - songTime > CONFIG.LEAD_TIME) break;   // sorted: nothing later is on screen low enough
+      if (n.lane !== lane) continue;
+
+      const r = this.noteRect(n, songTime, pps);
+
+      if (n.state === 'holding'){
+        /* Second finger landing on a hold that is already in progress:
+           harmless, absorb it instead of failing the run. */
+        if (this._insideRect(r, x, y, CONFIG.HOLD_TOLERANCE_PX)) alreadyHeld = true;
+        continue;
+      }
+      if (n.state !== 'pending') continue;
+
+      if (!this._inWindow(n, songTime)){
+        /* Finger IS on a real tile, but it is still too far up the screen.
+           Same outcome as an empty tap, clearer feedback. */
+        if (this._insideRect(r, x, y, CONFIG.TOUCH_TOLERANCE_PX)) tooEarly = true;
+        continue;
+      }
+      if (!this._insideHitZone(r, x, y)) continue;
+
+      const a = Math.abs(songTime - n.time);
+      if (a < bestAbs){ bestAbs = a; best = n; }
+    }
+
+    if (!best){
+      if (alreadyHeld) return;
+      /* STRICT RULE: a tap that lands on nothing ends the run instantly. */
+      this._failTap(x, y, tooEarly);
+      return;
+    }
+
+    this._hitNote(best, pid, x, y, songTime, pps);
+  }
+
+  _hitNote(note, pid, x, y, songTime, pps){
+    const dt = songTime - note.time;
+    const a = Math.abs(dt);
+    const key = a <= CONFIG.PERFECT_S ? 'PERFECT' : (a <= CONFIG.GREAT_S ? 'GREAT' : 'GOOD');
+    const j = JUDGE[key];
+    note.judge = key;
+
+    const prevMult = this.score.multiplier;
+    const gained = this.score.registerHit(key);
+    if (this.score.multiplier > prevMult) this._bumpMult();
+
+    const r = this.noteRect(note, songTime, pps);
+    const cx = r.x + r.w/2;
+    const cy = clamp(r.bottom - Math.min(r.h, CONFIG.TAP_NOTE_SECONDS*pps)/2, 60, this.LH-60);
+    const hue = comboHue(this.score.combo);
+
+    this.particles.burst(cx, this.strikeY, hue, key === 'PERFECT' ? 1.25 : 1.0);
+    this.popups.spawn(cx, this.strikeY - 130, '+' + gained, j.label, j.color,
+                      key === 'PERFECT' ? 52 : 44, this.LW);
+    this.laneFlash[note.lane] = 1;
+    this.strikePulse = 1;
+    this.audio.sfx('hit', this.score.combo);
+
+    if (note.type === 'hold'){
+      note.state = 'holding';
+      note.pointerId = pid;
+      this.pointers.set(pid, { note, lane:note.lane, isHold:true, startedAt:songTime, x, y });
+      this.laneHold[note.lane] = 1;
+    } else {
+      note.state = 'hit';
+      this.particles.shards(cx, this.strikeY, r.w, hue);
+      this.pointers.set(pid, { note:null, lane:note.lane, isHold:false, startedAt:songTime, x, y });
+    }
+  }
+
+  _failTap(x, y, tooEarly){
+    this.particles.burst(x, y, 0, 1.1);           // red burst at the offending finger
+    this.popups.spawn(x, y - 70, 'MISS-TAP', tooEarly ? 'TOO EARLY' : 'EMPTY SPACE', '#ff5566', 42, this.LW);
+    this.audio.sfx('miss');
+    this.endRound(tooEarly ? FAIL_REASON.TOO_EARLY : FAIL_REASON.WRONG_TAP);
+  }
+
+  onMove(pid, cx, cy){
+    if (this.state !== STATE.PLAYING) return;
+    const rec = this.pointers.get(pid);
+    if (!rec) return;
+    const { x, y } = this.toLogical(cx, cy);
+    rec.x = x; rec.y = y;
+    if (!rec.isHold || !rec.note || rec.note.state !== 'holding') return;
+
+    const note = rec.note;
+    const songTime = this.songTime;
+    const r = this.noteRect(note, songTime, this.pxPerSec);
+    if (!this._holdContains(note, r, x, y)){
+      this._breakHold(note, FAIL_REASON.HOLD_SLIP, x, y);
+    }
+  }
+
+  /** While a hold is in progress the finger must stay inside the tile,
+      OR inside the anchor band that straddles the strike line (the tile's
+      top edge sweeps down through your finger near the end, which would
+      otherwise fail an otherwise perfect hold). Lane is always enforced. */
+  _holdContains(note, r, x, y){
+    const tol = CONFIG.HOLD_TOLERANCE_PX;
+    if (x < r.x - tol || x > r.x + r.w + tol) return false;
+    const inRect = (y >= r.top - tol && y <= r.bottom + tol);
+    const inBand = (y >= this.strikeY - CONFIG.HOLD_ANCHOR_BAND_PX &&
+                    y <= this.strikeY + CONFIG.HOLD_ANCHOR_BAND_PX);
+    return inRect || inBand;
+  }
+
+  _breakHold(note, reason, x, y){
+    note.state = 'broken';
+    note.pointerId = null;
+    this.laneHold[note.lane] = 0;
+    this.particles.burst(x, y, 0, 1.0);
+    this.popups.spawn(x, y - 70, 'BROKEN', reason === FAIL_REASON.HOLD_EARLY ? 'RELEASED EARLY' : 'FINGER SLIPPED',
+                      '#ff5566', 42, this.LW);
+    this.audio.sfx('miss');
+    this.endRound(reason);
+  }
+
+  onUp(pid){
+    const rec = this.pointers.get(pid);
+    this.pointers.delete(pid);
+    if (!rec || this.state !== STATE.PLAYING) return;
+    if (!rec.isHold || !rec.note) return;
+
+    const note = rec.note;
+    if (note.state !== 'holding') return;
+
+    const songTime = this.songTime;
+    const remaining = (note.time + note.duration) - songTime;
+    if (remaining <= CONFIG.HOLD_RELEASE_GRACE_S){
+      this._completeHold(note);
+    } else {
+      this._breakHold(note, FAIL_REASON.HOLD_EARLY, rec.x, rec.y);
+    }
+  }
+
+  _completeHold(note){
+    if (note.state !== 'holding') return;
+    note.state = 'complete';
+    note.pointerId = null;
+    this.laneHold[note.lane] = 0;
+
+    const gained = this.score.registerHoldComplete();
+    const cx = this.laneX(note.lane) + this.laneW/2;
+    const hue = comboHue(this.score.combo);
+    this.particles.burst(cx, this.strikeY, hue, 1.5);
+    this.particles.shards(cx, this.strikeY, this.laneW, hue);
+    this.popups.spawn(cx, this.strikeY - 175, '+' + gained, 'HOLD CLEAR', '#8effc1', 50, this.LW);
+    this.laneFlash[note.lane] = 1;
+    this.strikePulse = 1;
+    this.audio.sfx('hold', this.score.combo);
+  }
+
+  /* ================================================================
+     UPDATE
+     ================================================================ */
+  update(dt, songTime){
+    /* --- section change banner ---------------------------------- */
+    const si = this.sectionIndexAt(songTime);
+    if (si !== this.lastSectionIdx && si > 0){
+      this.lastSectionIdx = si;
+      this.banner = { text:'SPEED UP', sub:SECTIONS[si].name, life:1.6, max:1.6 };
+      this.strikePulse = 1;
+    }
+
+    /* --- resolve notes ------------------------------------------ */
+    const pps = this.pxPerSec;
+
+    /* advance the sliding window past everything long gone */
+    while (this.firstLive < this.notes.length){
+      const n = this.notes[this.firstLive];
+      const tail = n.time + (n.type === 'hold' ? n.duration : 0);
+      if (n.state !== 'pending' && n.state !== 'holding' && songTime - tail > 1.2) this.firstLive++;
+      else break;
+    }
+
+    for (let i = this.firstLive; i < this.notes.length; i++){
+      const n = this.notes[i];
+      if (n.time - songTime > CONFIG.LEAD_TIME * 2.5) break;
+
+      if (n.state === 'pending'){
+        /* MISS: bottom edge has swept past the strike line untouched */
+        if (songTime - n.time > CONFIG.HIT_LATE_S){
+          n.state = 'missed';
+          this._registerMiss(n);
+        }
+      } else if (n.state === 'holding'){
+        const total = Math.max(n.duration, 0.001);
+        n.holdProgress = clamp((songTime - n.time) / total, 0, 1);
+        /* Completed by simply outlasting the tile — finger still down. */
+        if (songTime >= n.time + n.duration){
+          const pid = n.pointerId;                     // grab before it is cleared
+          this._completeHold(n);
+          const rec = pid != null ? this.pointers.get(pid) : null;
+          if (rec) rec.note = null;
+        } else if (this.state === STATE.PLAYING){
+          /* Continuous verification even without pointermove events. */
+          const rec = n.pointerId != null ? this.pointers.get(n.pointerId) : null;
+          if (!rec){
+            this._breakHold(n, FAIL_REASON.HOLD_EARLY,
+                            this.laneX(n.lane)+this.laneW/2, this.strikeY);
+          } else {
+            const r = this.noteRect(n, songTime, pps);
+            if (!this._holdContains(n, r, rec.x, rec.y)){
+              this._breakHold(n, FAIL_REASON.HOLD_SLIP, rec.x, rec.y);
+            }
+          }
+        }
+      }
+      if (this.state !== STATE.PLAYING) break;   // a fail happened mid-scan
+    }
+
+    /* --- song finished ------------------------------------------ */
+    if (this.state === STATE.PLAYING && songTime > SONG_DATA.duration + SONG_TAIL){
+      this.endRound(FAIL_REASON.CLEARED, false);
+      this.banner = { text:'CLEAR!', sub:'', life:1.4, max:1.4 };
+    }
+  }
+
+  _registerMiss(note){
+    const consec = this.score.registerMiss();
+    const cx = this.laneX(note.lane) + this.laneW/2;
+    this.popups.spawn(cx, this.strikeY - 110, 'MISS', '', '#ff5566', 40, this.LW);
+    this.shake = Math.max(this.shake, 10);
+    this.redFlash = Math.max(this.redFlash, 0.45);
+    this.audio.sfx('miss');
+    this._flashPips();
+    if (consec >= CONFIG.MAX_CONSECUTIVE_MISSES) this.endRound(FAIL_REASON.MISSES);
+  }
+
+  updateFx(dt){
+    for (let i=0;i<4;i++){
+      this.laneFlash[i] = Math.max(0, this.laneFlash[i] - dt*3.4);
+    }
+    this.strikePulse = Math.max(0, this.strikePulse - dt*3.0);
+    this.shake = Math.max(0, this.shake - this.shake * CONFIG.SHAKE_DECAY * dt - 6*dt);
+    this.redFlash = Math.max(0, this.redFlash - dt*1.6);
+    if (this.banner){
+      this.banner.life -= dt;
+      if (this.banner.life <= 0) this.banner = null;
+    }
+    this.particles.update(dt);
+    this.popups.update(dt);
+  }
+
+  /* ================================================================
+     HUD
+     ================================================================ */
+  _bumpMult(){
+    const el = this.dom.mult;
+    el.classList.add('bump');
+    setTimeout(() => el.classList.remove('bump'), 190);
+  }
+  _flashPips(){
+    const lost = Math.min(this.score.consecutiveMisses, CONFIG.MAX_CONSECUTIVE_MISSES);
+    this.dom.pips.forEach((p,i) => p.classList.toggle('lost', i < lost));
+  }
+
+  _syncHud(force){
+    const c = this._hudCache, s = this.score;
+    if (force || c.score !== s.score){
+      c.score = s.score;
+      this.dom.score.textContent = s.score.toLocaleString();
+    }
+    if (force || c.combo !== s.combo){
+      if (s.combo > (c.combo|0) && s.combo > 1){
+        this.dom.comboBox.classList.add('pop');
+        setTimeout(() => this.dom.comboBox.classList.remove('pop'), 110);
+      }
+      c.combo = s.combo;
+      this.dom.combo.textContent = s.combo;
+      this.dom.combo.style.color = s.combo > 0 ? comboColor(s.combo, 68) : '#33415a';
+      this.dom.comboBox.style.opacity = s.combo > 0 ? '1' : '0.35';
+    }
+    const m = s.multiplier;
+    if (force || c.mult !== m){
+      c.mult = m;
+      this.dom.mult.textContent = '×' + m;
+      this.dom.mult.classList.toggle('on', m > 1);
+      this.dom.mult.style.color = comboColor(s.combo, 70);
+    }
+    if (force || c.misses !== s.consecutiveMisses){
+      c.misses = s.consecutiveMisses;
+      this._flashPips();
+    }
+    const prog = clamp(this.lastSongTime / SONG_DATA.duration, 0, 1);
+    const pct = Math.round(prog * 1000) / 10;
+    if (force || c.prog !== pct){
+      c.prog = pct;
+      this.dom.progressFill.style.width = pct + '%';
+    }
+    const secName = SECTIONS[this.sectionIndexAt(this.lastSongTime)].name;
+    if (force || c.sec !== secName){
+      c.sec = secName;
+      this.dom.songSection.textContent = secName;
+    }
+  }
+
+  /* ================================================================
+     RENDER
+     ================================================================ */
+  render(songTime){
+    const c = this.ctx;
+    const pps = this.pxPerSec;
+    const combo = this.score.combo;
+    const hue = comboHue(combo);
+    const heat = clamp(combo / 40, 0, 1);   // 0..1 streak intensity
+
+    /* ---- backdrop (pre-rendered) + screen shake ---- */
+    let sx = 0, sy = 0;
+    if (this.shake > 0.4){
+      sx = (Math.random()-0.5) * this.shake;
+      sy = (Math.random()-0.5) * this.shake;
+    }
+    c.setTransform(1, 0, 0, 1, 0, 0);
+    if (sx || sy){
+      c.fillStyle = '#03050c';
+      c.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    }
+    c.drawImage(this.bgCanvas, sx * this.renderScale, sy * this.renderScale);
+    c.setTransform(this.renderScale, 0, 0, this.renderScale,
+                   sx * this.renderScale, sy * this.renderScale);
+
+    /* ---- lane glow (only for lanes that are actually lit) ---- */
+    for (let i=0;i<CONFIG.LANE_COUNT;i++){
+      const flash = this.laneFlash[i];
+      if (flash <= 0.01 && this.laneHold[i] <= 0) continue;
+      const x = this.laneX(i);
+      const alpha = Math.max(flash*0.30, this.laneHold[i]*0.18);
+      const top = this.strikeY - 640;
+      /* stacked bands instead of a gradient: cheaper, visually identical */
+      for (let b=0;b<8;b++){
+        c.fillStyle = `hsla(${hue},95%,62%,${alpha*((b+1)/8)*0.3})`;
+        c.fillRect(x, top + b*80, this.laneW, 80);
+      }
+    }
+    /* outer frame — warms up as the streak grows */
+    c.strokeStyle = `hsla(${hue},90%,62%,${0.10 + heat*0.42})`;
+    c.lineWidth = 3 + heat*4;
+    c.strokeRect(this.fieldX + 1.5, -10, this.fieldW - 3, this.LH + 20);
+
+    /* ---- notes ---- */
+    for (let i = this.firstLive; i < this.notes.length; i++){
+      const n = this.notes[i];
+      if (n.time - songTime > CONFIG.LEAD_TIME * 2.2) break;
+      if (n.state === 'hit' || n.state === 'complete' || n.state === 'broken') continue;
+      const r = this.noteRect(n, songTime, pps);
+      if (r.top > this.LH + 60) continue;   // fully below the screen
+      if (r.bottom < -60) continue;         // fully above the screen
+      this._drawNote(c, n, r, songTime, pps, hue);
+    }
+
+    /* ---- strike line ---- */
+    this._drawStrikeLine(c, hue, heat);
+
+    /* ---- fx ---- */
+    this.particles.draw(c);
+    this.popups.draw(c);
+
+    /* ---- banner / countdown ---- */
+    if (this.banner) this._drawBanner(c, hue);
+    if (this.state === STATE.COUNTDOWN) this._drawCountdown(c, hue);
+
+    /* ---- red fail flash ---- */
+    if (this.redFlash > 0.01){
+      c.fillStyle = `rgba(255,40,60,${this.redFlash*0.34})`;
+      c.fillRect(-40, -40, this.LW + 80, this.LH + 80);
+    }
+  }
+
+  _drawNote(c, n, r, songTime, pps, hue){
+    const missed = (n.state === 'missed');
+    const holding = (n.state === 'holding');
+    const isHold = n.type === 'hold';
+
+    /* Fade tiles in as they enter, so nothing pops into existence. */
+    const enterFade = clamp((r.bottom + 40) / 220, 0, 1);
+    c.globalAlpha = missed ? 0.24 : enterFade;
+
+    /* body */
+    roundRectPath(c, r.x, r.top, r.w, r.h, CONFIG.NOTE_CORNER);
+    if (missed){
+      c.fillStyle = '#3a1420';
+    } else if (isHold){
+      const g = c.createLinearGradient(0, r.top, 0, r.bottom);
+      if (holding){
+        g.addColorStop(0, `hsla(${hue},80%,26%,1)`);
+        g.addColorStop(1, `hsla(${hue},90%,44%,1)`);
+      } else {
+        g.addColorStop(0, '#0f1421');
+        g.addColorStop(1, '#1b2338');
+      }
+      c.fillStyle = g;
+    } else {
+      const g = c.createLinearGradient(0, r.top, 0, r.bottom);
+      g.addColorStop(0, '#161b28');
+      g.addColorStop(0.55, '#080b13');
+      g.addColorStop(1, '#020409');
+      c.fillStyle = g;
+    }
+    c.fill();
+
+    /* hold: bright "consumed" section below the strike line */
+    if (isHold && holding && r.bottom > this.strikeY){
+      c.save();
+      roundRectPath(c, r.x, r.top, r.w, r.h, CONFIG.NOTE_CORNER);
+      c.clip();
+      const gg = c.createLinearGradient(0, this.strikeY - 90, 0, this.strikeY + 30);
+      gg.addColorStop(0, `hsla(${hue},100%,70%,0)`);
+      gg.addColorStop(1, `hsla(${hue},100%,72%,0.85)`);
+      c.fillStyle = gg;
+      c.fillRect(r.x, this.strikeY - 90, r.w, Math.max(0, r.bottom - this.strikeY + 90));
+      c.restore();
+    }
+
+    /* edge + top highlight */
+    roundRectPath(c, r.x, r.top, r.w, r.h, CONFIG.NOTE_CORNER);
+    c.lineWidth = holding ? 4 : 2;
+    c.strokeStyle = missed ? 'rgba(255,90,110,.45)'
+                  : holding ? `hsla(${hue},100%,78%,.95)`
+                  : `hsla(${hue},70%,72%,.30)`;
+    c.stroke();
+
+    if (!missed){
+      /* leading (bottom) edge glow — the part you aim at */
+      const eh = Math.min(9, r.h*0.3);
+      c.save();
+      roundRectPath(c, r.x, r.top, r.w, r.h, CONFIG.NOTE_CORNER);
+      c.clip();
+      const eg = c.createLinearGradient(0, r.bottom - 40, 0, r.bottom);
+      eg.addColorStop(0, `hsla(${hue},100%,70%,0)`);
+      eg.addColorStop(1, `hsla(${hue},100%,${holding?86:74}%,${holding?1:.55})`);
+      c.fillStyle = eg;
+      c.fillRect(r.x, r.bottom - 40, r.w, 40);
+      c.fillStyle = `hsla(${hue},100%,88%,${holding?1:.7})`;
+      c.fillRect(r.x, r.bottom - eh*0.34, r.w, eh*0.34);
+      c.restore();
+
+      if (isHold){
+        /* rail down the middle of the hold, filling as it is held */
+        const cx = r.x + r.w/2;
+        c.strokeStyle = holding ? `hsla(${hue},100%,90%,.9)` : 'rgba(190,215,255,.28)';
+        c.lineWidth = 5;
+        c.lineCap = 'round';
+        c.beginPath();
+        c.moveTo(cx, r.top + 18);
+        c.lineTo(cx, r.bottom - 18);
+        c.stroke();
+        c.lineCap = 'butt';
+      }
+    }
+    c.globalAlpha = 1;
+  }
+
+  _drawStrikeLine(c, hue, heat){
+    const y = this.strikeY;
+    const p = this.strikePulse;
+
+    /* glow bloom above the line */
+    const g = c.createLinearGradient(0, y - 150 - p*80, 0, y);
+    g.addColorStop(0, `hsla(${hue},100%,60%,0)`);
+    g.addColorStop(1, `hsla(${hue},100%,64%,${0.14 + heat*0.16 + p*0.34})`);
+    c.fillStyle = g;
+    c.fillRect(this.fieldX, y - 150 - p*80, this.fieldW, 150 + p*80);
+
+    /* the line itself */
+    const h = 5 + p*7;
+    c.fillStyle = `hsla(${hue},100%,${72 + p*20}%,1)`;
+    c.fillRect(this.fieldX - 6, y - h/2, this.fieldW + 12, h);
+
+    /* soft halo below */
+    const g2 = c.createLinearGradient(0, y, 0, y + 70 + p*40);
+    g2.addColorStop(0, `hsla(${hue},100%,70%,${0.35 + p*0.35})`);
+    g2.addColorStop(1, `hsla(${hue},100%,70%,0)`);
+    c.fillStyle = g2;
+    c.fillRect(this.fieldX, y, this.fieldW, 70 + p*40);
+
+    /* lane pips on the line */
+    for (let i=0;i<CONFIG.LANE_COUNT;i++){
+      const cx = this.laneX(i) + this.laneW/2;
+      const rad = 5 + this.laneFlash[i]*20 + p*3;
+      c.fillStyle = `hsla(${hue},100%,88%,${0.5 + this.laneFlash[i]*0.5})`;
+      c.beginPath(); c.arc(cx, y, rad, 0, Math.PI*2); c.fill();
+    }
+  }
+
+  _drawBanner(c, hue){
+    const b = this.banner;
+    const t = b.life / b.max;
+    const a = t > 0.75 ? (1-t)*4 : Math.min(1, t*2.4);
+    c.save();
+    c.globalAlpha = clamp(a, 0, 1);
+    c.textAlign = 'center'; c.textBaseline = 'middle';
+    const y = this.LH * 0.42;
+    const s = 1 + (1-t)*0.12;
+    c.translate(this.LW/2, y); c.scale(s, s);
+    c.fillStyle = `hsla(${hue},100%,72%,1)`;
+    c.font = '900 96px "Avenir Next",Helvetica,Arial,sans-serif';
+    c.fillText(b.text, 0, 0);
+    if (b.sub){
+      c.fillStyle = 'rgba(220,235,255,.75)';
+      c.font = '800 34px "Avenir Next",Helvetica,Arial,sans-serif';
+      c.fillText(b.sub, 0, 74);
+    }
+    c.restore();
+  }
+
+  _drawCountdown(c, hue){
+    const msLeft = this.countdownEnd - performance.now();
+    const secs = Math.ceil(msLeft / 1000);
+    const frac = 1 - ((msLeft % 1000) / 1000);      // 0..1 within the current second
+    const label = secs <= 0 ? 'GO' : String(secs);
+    c.save();
+    c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.translate(this.LW/2, this.LH*0.42);
+    const s = 1.5 - frac*0.5;
+    c.scale(s, s);
+    c.globalAlpha = clamp(1 - frac*0.65, 0, 1);
+    c.fillStyle = `hsla(${hue},100%,78%,1)`;
+    c.font = '900 200px "Avenir Next",Helvetica,Arial,sans-serif';
+    c.fillText(label, 0, 0);
+    c.restore();
+
+    c.save();
+    c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.globalAlpha = 0.8;
+    c.fillStyle = 'rgba(200,220,255,.8)';
+    c.font = '800 30px "Avenir Next",Helvetica,Arial,sans-serif';
+    c.fillText('GET READY', this.LW/2, this.LH*0.42 + 170);
+    c.restore();
+  }
+
+  /* ================================================================
+     MAIN LOOP
+     ================================================================ */
+  /* The audio clock is always the master clock — including during the
+     countdown, where it runs negative (or from the pause point on resume). */
+  get songTime(){ return this.audio.songTime; }
+
+  loop(now){
+    requestAnimationFrame(this.loop);
+
+    const dt = Math.min(0.05, this.lastFrame ? (now - this.lastFrame)/1000 : 1/60);
+    this.lastFrame = now;
+
+    /* 1. master clock */
+    let songTime;
+    if (this.state === STATE.MENU || this.state === STATE.RESULTS){
+      songTime = this.lastSongTime || 0;
+    } else if (this.state === STATE.PAUSED){
+      songTime = this.audio.songTime;
+    } else {
+      songTime = this.songTime;
+    }
+    this.lastSongTime = songTime;
+
+    /* 2. audio look-ahead scheduling */
+    if (this.state === STATE.COUNTDOWN || this.state === STATE.PLAYING) this.audio.schedule();
+
+    /* 3. state transitions */
+    if (this.state === STATE.COUNTDOWN && performance.now() >= this.countdownEnd){
+      this.state = STATE.PLAYING;
+    }
+    if (this.state === STATE.ROUND_OVER && performance.now() - this.roundOverAt > 1250){
+      this.showResults();
+    }
+
+    /* 4. gameplay */
+    if (this.state === STATE.PLAYING) this.update(dt, songTime);
+
+    /* 5. fx + render */
+    this.updateFx(dt);
+    this.render(songTime);
+
+    /* 6. HUD */
+    if (this.state !== STATE.MENU) this._syncHud(false);
+  }
+}
+
+/* ================================================================
+   BOOT
+   ================================================================ */
+window.addEventListener('load', () => {
+  window.__game = new Game();
+});
+</script>
+</body>
+</html>
